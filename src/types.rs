@@ -1,5 +1,3 @@
-use rusqlite::*;
-use serde::{Deserialize, Serialize};
 use std::{
     array::TryFromSliceError,
     collections::HashMap,
@@ -12,6 +10,10 @@ use std::{
     str::FromStr,
     sync::{Arc, Mutex},
 };
+
+use anyhow::{anyhow, Result};
+use rusqlite::*;
+use serde::{Deserialize, Serialize};
 use structopt::*;
 
 #[allow(unused_imports)]
@@ -221,6 +223,15 @@ impl<T: ?Sized + AsRef<OsStr>> From<&T> for Directory {
     }
 }
 
+impl Directory {
+    /// Get the string as a Result instead of Option. Convenient for exception handling.
+    pub fn to_str(&self) -> Result<&str> {
+        self.0
+            .to_str()
+            .ok_or_else(|| anyhow!("Could not convert to string: {:#?}", self.0))
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone)]
 pub(crate) struct Basename(pub PathBuf);
 
@@ -278,7 +289,7 @@ impl Deref for Checksum {
 }
 
 impl ToSql for Checksum {
-    fn to_sql(&self) -> Result<types::ToSqlOutput<'_>> {
+    fn to_sql(&self) -> rusqlite::Result<types::ToSqlOutput<'_>> {
         self.0.to_sql()
     }
 }
@@ -311,7 +322,7 @@ pub(crate) struct DuplicateGroup {
 }
 
 impl DuplicateGroup {
-    pub fn new(match_group: Vec<FileData>, options: &Options) -> Option<DuplicateGroup> {
+    pub fn new(match_group: Vec<FileData>, options: &Options) -> Result<Option<DuplicateGroup>> {
         type FileId = (Inode, Deviceno);
 
         assert!(match_group.len() > 1);
@@ -322,7 +333,7 @@ impl DuplicateGroup {
                 file.inode != match_group[0].inode || file.deviceno != match_group[0].deviceno
             })
         {
-            return None; // no further consolidation is possible
+            return Ok(None); // no further consolidation is possible
         }
 
         // Group filenames by hardlinked files, so the user can see what needs to be consolidated
@@ -331,7 +342,7 @@ impl DuplicateGroup {
             let hardlinked_subgroup = hardlinked_subgroups
                 .entry((file.inode, file.deviceno))
                 .or_default();
-            hardlinked_subgroup.push(file.path_str_unwrap());
+            hardlinked_subgroup.push(file.path_str()?);
         }
 
         let file_size = match_group.first().unwrap().size.0;
@@ -344,9 +355,9 @@ impl DuplicateGroup {
             .map(|subgroup| subgroup.1)
             .collect();
 
-        Some(DuplicateGroup {
+        Ok(Some(DuplicateGroup {
             duplicates,
             redundant_bytes,
-        })
+        }))
     }
 }

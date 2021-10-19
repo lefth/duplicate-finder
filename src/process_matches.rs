@@ -16,6 +16,7 @@ use std::{
     time::Instant,
 };
 
+use anyhow::Result;
 use bytesize::ByteSize;
 use memmap::Mmap;
 use multi_semaphore::Semaphore;
@@ -57,19 +58,19 @@ pub(crate) trait ProcessMatches {
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
         options: &Options,
-    ) -> Box<dyn Iterator<Item = Vec<RowId>>>;
+    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>>;
 
     /// Wrapper for [`process_matches_`].
     fn process_matches(
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
         options: &Options,
-    ) -> Vec<Vec<RowId>> {
-        Self::process_matches_(candidate_groups, conn, options)
+    ) -> Result<Vec<Vec<RowId>>> {
+        Ok(Self::process_matches_(candidate_groups, conn, options)?
             .into_iter()
             // It's not a duplicate group if just one file:
             .filter(|files| files.len() > 1)
-            .collect()
+            .collect())
     }
 }
 
@@ -83,7 +84,7 @@ impl ProcessMatches for GetFiles {
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
         options: &Options,
-    ) -> Box<dyn Iterator<Item = Vec<RowId>>> {
+    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
         #[cfg(unix)]
         use std::os::unix::prelude::MetadataExt;
         #[cfg(windows)]
@@ -123,7 +124,7 @@ impl ProcessMatches for GetFiles {
 
         let mut row_ids: HashMap<Size, Vec<RowId>> = HashMap::new();
 
-        let mut transaction = Box::new(transaction(conn));
+        let mut transaction = Box::new(transaction(conn)?);
 
         let mut known_directories = HashSet::new();
         let mut dirs_to_explore: Vec<PathBuf> =
@@ -169,8 +170,8 @@ impl ProcessMatches for GetFiles {
 
                 if (count.fetch_add(1, Relaxed) + 1) % 1000 == 0 {
                     // Commit and start a new transaction, in case the operation is interrupted
-                    transaction.commit().unwrap();
-                    transaction = Box::new(file_db::file_db::transaction(conn));
+                    transaction.commit()?;
+                    transaction = Box::new(file_db::file_db::transaction(conn)?);
                 }
 
                 let path = dir_entry.path();
@@ -224,19 +225,19 @@ impl ProcessMatches for GetFiles {
                 } else {
                     #[cfg(windows)]
                     fn get_device_no_win(md: &Metadata) -> u64 {
-                        md.volume_serial_number().unwrap() as u64
+                        md.volume_serial_number()? as u64
                     }
                     let row_id = add_file(
                         &transaction,
                         &Basename::from(&dir_entry.file_name()),
-                        &Directory::from(path.parent().unwrap()),
+                        &Directory::from(path.parent().unwrap()), // can't be empty; will be "."
                         Inode(
                             #[cfg(unix)]
                             md.ino(),
                             // This needs to be built with nightly on Windows--
                             // https://github.com/rust-lang/rust/issues/63010
                             #[cfg(windows)]
-                            md.file_index().unwrap(),
+                            md.file_index()?,
                         ),
                         Deviceno(
                             #[cfg(unix)]
@@ -245,13 +246,13 @@ impl ProcessMatches for GetFiles {
                             get_device_no_win(&md),
                         ),
                         size,
-                    );
+                    )?;
                     row_ids.entry(size).or_default().push(row_id);
                 }
             }
         }
 
-        transaction.commit().unwrap();
+        transaction.commit()?;
 
         debug!(
             "Found {} files while walking tree. Stage 1 took: {:?}",
@@ -259,7 +260,7 @@ impl ProcessMatches for GetFiles {
             start_time.elapsed()
         );
 
-        Box::new(row_ids.into_iter().map(|(_key, val)| val))
+        Ok(Box::new(row_ids.into_iter().map(|(_key, val)| val)))
     }
 }
 
@@ -270,7 +271,7 @@ impl ProcessMatches for GroupByShortChecksum {
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
         options: &Options,
-    ) -> Box<dyn Iterator<Item = Vec<RowId>>> {
+    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
         // Stage 2: new candidates are old candidates with the same md5sum of the
         // first chunk_size bytes. This will prevent the need to check the whole file's
         // md5sum for large files that just happen to have identical size.
@@ -294,7 +295,7 @@ impl ProcessMatches for GroupByFullChecksum {
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
         options: &Options,
-    ) -> Box<dyn Iterator<Item = Vec<RowId>>> {
+    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
         // Stage 3: current candidates are those with matching size and short checksum.
         // New groups (not candidates) will be those with matching size and full checksums.
 
@@ -320,9 +321,10 @@ fn get_store_checksums(
     candidate_groups: Option<Vec<Vec<RowId>>>,
     conn: &mut Connection,
     options: &Options,
-) -> Box<dyn Iterator<Item = Vec<RowId>>> {
+) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
     assert!(candidate_groups.is_some());
-    let candidate_groups = candidate_groups.unwrap();
+    let candidate_groups =
+        candidate_groups.expect("get_store_checksums needs to be given an existing list");
 
     // The techniques used here are hash-based, never based on sorting and comparing equality
     // with the previous file. So the candidate groups can be merged into bigger chunks
@@ -387,7 +389,7 @@ fn get_store_checksums(
         get_files(conn, &file_ids, |file| {
             trace!("Added candidate file: {:?}", file);
             need_checksums.push(file);
-        });
+        })?;
 
         trace!(
             "Constructed {} files from DB rows. {:?} elapsed.",
@@ -402,7 +404,7 @@ fn get_store_checksums(
             column_name,
             conn,
             options,
-        ));
+        )?);
     }
 
     let mut candidate_groups: HashMap<Checksum, Vec<RowId>> = HashMap::new();
@@ -411,7 +413,9 @@ fn get_store_checksums(
     }
 
     debug!("{} took: {:?}", routine_description, start_time.elapsed());
-    Box::new(candidate_groups.into_iter().map(|(_key, val)| val))
+    Ok(Box::new(
+        candidate_groups.into_iter().map(|(_key, val)| val),
+    ))
 }
 
 /// Compute the checksums of multiple files using threads.
@@ -423,7 +427,7 @@ fn store_checksums(
     column_name: &str,
     conn: &mut Connection,
     options: &Options,
-) -> HashMap<RowId, Checksum> {
+) -> Result<HashMap<RowId, Checksum>> {
     // Each element is list of links that refer to the same file.
     // One checksum job is spawned for those hard links.
     let mut files_in_queue: HashMap<JobId, Vec<RowId>> = HashMap::new();
@@ -446,7 +450,7 @@ fn store_checksums(
             .or_insert_with(|| {
                 // This is a new inode/device combination
                 trace!("Sending {} checksum job to a thread worker", file.row_id);
-                let path = file.path_unwrap();
+                let path = file.path().unwrap();
                 let io_lock = Arc::clone(&io_lock);
                 let filesize = file.size;
                 let mmap = options.mmap;
@@ -474,16 +478,16 @@ fn store_checksums(
 
     debug!("Now waiting for thread results");
 
-    let mut transaction = Box::new(transaction(conn));
+    let mut transaction = Box::new(transaction(conn)?);
     let mut checksum_data = HashMap::new();
     for n in 1..=files_in_queue.len() {
         if n % 1000 == 0 {
             // Commit and start a new transaction, in case the operation is interrupted
-            transaction.commit().unwrap();
-            transaction = Box::new(file_db::file_db::transaction(conn));
+            transaction.commit()?;
+            transaction = Box::new(file_db::file_db::transaction(conn)?);
         }
         trace!("Receiving result {} of {}", n, files_in_queue.len());
-        let (pair, result) = rx.recv().unwrap();
+        let (pair, result) = rx.recv()?;
         trace!(
             "Got result {} of {} ({})",
             n,
@@ -505,14 +509,14 @@ fn store_checksums(
         );
         for rowid in files_in_queue.get(&pair).unwrap() {
             checksum_data.insert(*rowid, checksum);
-            update_record(&transaction, *rowid, &[&column_name], params![checksum]);
+            update_record(&transaction, *rowid, &[&column_name], params![checksum])?;
         }
     }
     pool.join();
     assert!(rx.try_recv().is_err()); // the pool should have been finished already, after we got enough data
-    transaction.commit().unwrap();
+    transaction.commit()?;
 
-    checksum_data
+    Ok(checksum_data)
 }
 
 // This function includes I/O bound parts (reading from disk) and
@@ -586,7 +590,7 @@ fn compute_checksum(
     trace!("Sending successful result for job {:?}", job_id);
     Ok((*digest.as_bytes())
         .try_into()
-        .expect("checksum: wrong length"))
+        .expect("checksum: wrong length (Infallible)"))
 }
 pub(crate) struct PrintMatches {}
 
@@ -595,9 +599,10 @@ impl ProcessMatches for PrintMatches {
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
         options: &Options,
-    ) -> Box<dyn Iterator<Item = Vec<RowId>>> {
+    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
         assert!(candidate_groups.is_some());
-        let candidate_groups = candidate_groups.unwrap();
+        let candidate_groups =
+            candidate_groups.expect("PrintMatches needs to be given an existing list");
 
         let mut file_count = 0;
 
@@ -608,16 +613,16 @@ impl ProcessMatches for PrintMatches {
             get_files(conn, group_ids, |file| {
                 file_count += 1;
                 group.push(file);
-            });
+            })?;
 
-            if let Some(group) = DuplicateGroup::new(group, options) {
+            if let Some(group) = DuplicateGroup::new(group, options)? {
                 redundant_bytes += group.redundant_bytes;
                 processed_groups.push(group);
             }
         }
 
         if options.print_json {
-            serde_json::to_writer_pretty(std::io::stdout(), &processed_groups).unwrap();
+            serde_json::to_writer_pretty(std::io::stdout(), &processed_groups)?;
         } else {
             for group in processed_groups {
                 for filename in group.duplicates.iter().flatten() {
@@ -652,6 +657,6 @@ impl ProcessMatches for PrintMatches {
         info!("{} can be reclaimed", ByteSize::b(redundant_bytes));
 
         // Data is no longer needed
-        Box::new(Vec::new().into_iter())
+        Ok(Box::new(Vec::new().into_iter()))
     }
 }

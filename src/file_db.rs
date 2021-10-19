@@ -1,26 +1,27 @@
 pub(crate) mod file_db {
+    use std::{cell::RefCell, collections::HashMap, convert::TryInto, path::PathBuf};
+
+    use anyhow::{anyhow, Result};
     #[allow(unused_imports)]
     use log::{debug, error, info, trace, warn};
     use rusqlite::{
         ffi, params, params_from_iter, types::Null, Connection, DropBehavior, Error, ErrorCode,
         ToSql, Transaction,
     };
-    use std::{cell::RefCell, collections::HashMap, convert::TryInto, path::PathBuf};
 
     use crate::{file_data::file_data::FileData, types::*};
 
     pub(crate) static TABLE_NAME: &str = "files";
 
-    pub(crate) fn init_connection(options: &mut Options) -> Connection {
+    pub(crate) fn init_connection(options: &mut Options) -> Result<Connection> {
         let conn = if options.db_file == ":memory:" {
             Connection::open_in_memory()
         } else {
             Connection::open(&options.db_file)
-        }
-        .unwrap();
+        }?;
 
         // much bigger cache
-        conn.execute("PRAGMA cache_size = 40000", []).unwrap();
+        conn.execute("PRAGMA cache_size = 40000", [])?;
 
         // Create a table for files and a lookup for their directories.
         // Don't add indices, they are implicit as the "rowid" column:
@@ -30,7 +31,7 @@ pub(crate) mod file_db {
                 UNIQUE(basename, dir_id))")].iter()
         {
             if !options.no_truncate_db {
-                conn.execute(&format!("DROP TABLE IF EXISTS {}", table_name), []).unwrap();
+                conn.execute(&format!("DROP TABLE IF EXISTS {}", table_name), [])?;
 
                 // never truncate twice if experimenting with multiple connections:
                 options.no_truncate_db = true;
@@ -39,18 +40,18 @@ pub(crate) mod file_db {
             let ifnotexists = if !options.no_truncate_db { String::from("") } else { "IF NOT EXISTS".to_string() };
             let statement = format!("CREATE TABLE {} {} {}", ifnotexists, table_name, table_spec);
             trace!("Statement: {}", statement);
-            conn.execute(&statement, []).unwrap();
+            conn.execute(&statement, [])?;
         }
 
-        conn
+        Ok(conn)
     }
 
-    pub(crate) fn transaction(conn: &Connection) -> Transaction {
+    pub(crate) fn transaction(conn: &Connection) -> Result<Transaction> {
         // Use unchecked_transaction because we can't release a mutable Connection borrow
         // in the middle of a loop when we want to commit and restart a transaction.
-        let mut t = conn.unchecked_transaction().unwrap();
+        let mut t = conn.unchecked_transaction()?;
         t.set_drop_behavior(DropBehavior::Commit); // We don't roll back transactions
-        t
+        Ok(t)
     }
 
     pub(crate) fn add_file(
@@ -60,7 +61,7 @@ pub(crate) mod file_db {
         inode: Inode,
         deviceno: Deviceno,
         size: Size,
-    ) -> RowId {
+    ) -> Result<RowId> {
         type DirectoryCache = RefCell<HashMap<PathBuf, DirectoryId>>;
         thread_local! {
             // This function is only called from one thread, and cache misses still wouldn't break anything
@@ -69,23 +70,19 @@ pub(crate) mod file_db {
         let basename = basename
             .0
             .to_str()
-            .expect("Directory is not a valid string");
+            .ok_or_else(|| anyhow!("Directory is not a valid string: {:#?}", basename))?;
 
-        let directory_id = DIRECTORY_CACHE.with(|cache: &DirectoryCache| {
-            cache
-                .borrow()
-                .get(&directory.0)
-                .map(|directory_id| directory_id.clone())
-        });
-        let directory_id = directory_id.unwrap_or_else(|| {
+        let directory_id = DIRECTORY_CACHE
+            .with(|cache: &DirectoryCache| cache.borrow().get(&directory.0).cloned())
+            .ok_or(anyhow!("not found"));
+
+        let directory_id = directory_id.or_else(|_err| -> Result<DirectoryId> {
             let result = {
-                let mut dir_stmt = conn
-                    .prepare_cached(
-                        "INSERT INTO directories \
+                let mut dir_stmt = conn.prepare_cached(
+                    "INSERT INTO directories \
                         (directory) VALUES (:directory)",
-                    )
-                    .unwrap();
-                dir_stmt.execute(params![directory.0.to_str().unwrap()])
+                )?;
+                dir_stmt.execute(params![directory.to_str()?])
             };
 
             // Handle directory IDs that already exist:
@@ -95,12 +92,9 @@ pub(crate) mod file_db {
                     if code == ErrorCode::ConstraintViolation =>
                 {
                     // Row exists. This is not a real problem:
-                    let mut statement = conn
-                        .prepare_cached("SELECT rowid FROM directories WHERE directory = ?1")
-                        .unwrap();
-                    statement
-                        .query_row(params![directory.0.to_str().unwrap()], |row| row.get(0))
-                        .unwrap()
+                    let mut statement =
+                        conn.prepare_cached("SELECT rowid FROM directories WHERE directory = ?1")?;
+                    statement.query_row(params![directory.to_str()?], |row| row.get(0))?
                 }
                 Err(err) => panic!("Error adding directory: {}", err),
             };
@@ -112,16 +106,14 @@ pub(crate) mod file_db {
                     .borrow_mut()
                     .insert(directory.0.to_owned(), directory_id)
             });
-            directory_id
-        });
+            Ok(directory_id)
+        })?;
 
-        let mut file_stmt = conn
-            .prepare_cached(
-                "INSERT INTO files \
+        let mut file_stmt = conn.prepare_cached(
+            "INSERT INTO files \
                 (basename, dir_id, inode, deviceno, size) \
                 VALUES (?, ?, ?, ?, ?)",
-            )
-            .unwrap();
+        )?;
 
         let result = file_stmt.execute(params![
             basename,
@@ -144,13 +136,11 @@ pub(crate) mod file_db {
                 _,
             )) => {
                 // Row exists. Get its ID:
-                let mut statement = conn
-                    .prepare_cached("SELECT rowid FROM files WHERE basename = ?1 AND dir_id == ?2")
-                    .unwrap();
+                let mut statement = conn.prepare_cached(
+                    "SELECT rowid FROM files WHERE basename = ?1 AND dir_id == ?2",
+                )?;
                 let row_id = RowId(
-                    statement
-                        .query_row(params![basename, directory_id.0], |row| row.get(0))
-                        .unwrap(),
+                    statement.query_row(params![basename, directory_id.0], |row| row.get(0))?,
                 );
                 drop(statement);
 
@@ -160,7 +150,7 @@ pub(crate) mod file_db {
                     row_id,
                     &["inode", "deviceno", "size", "shortchecksum", "checksum"],
                     params![inode.0, deviceno.0, size.0, Null, Null],
-                );
+                )?;
                 row_id
             }
             Err(err) => panic!("Error adding file row: {}", err),
@@ -168,10 +158,14 @@ pub(crate) mod file_db {
 
         trace!("Inserted row {}", file_id);
 
-        file_id
+        Ok(file_id)
     }
 
-    pub(crate) fn get_files<F>(conn: &Connection, file_rows: &Vec<RowId>, mut callback: F)
+    pub(crate) fn get_files<F>(
+        conn: &Connection,
+        file_rows: &Vec<RowId>,
+        mut callback: F,
+    ) -> Result<()>
     where
         F: FnMut(FileData),
     {
@@ -184,38 +178,44 @@ pub(crate) mod file_db {
         let mut iter = file_rows[..].chunks(500);
         while let Some(ids) = iter.next() {
             let question_marks = n_question_marks(ids.len());
-            let mut statement = conn
-                .prepare_cached(&format!(
-                    "SELECT files.rowid, \
+            let mut statement = conn.prepare_cached(&format!(
+                "SELECT files.rowid, \
                             inode, size, deviceno, shortchecksum, checksum, \
                             directory, basename \
                             FROM files INNER JOIN directories ON files.dir_id = directories.rowid \
                             WHERE files.rowid IN ({})",
-                    question_marks
-                ))
-                .unwrap();
+                question_marks
+            ))?;
 
-            let mut rows = statement
-                .query(params_from_iter(ids.iter().map(|r| r.0)))
-                .unwrap();
-            while let Some(row) = rows.next().unwrap() {
-                let shortchecksum: Option<Checksum> =
-                    row.get_unwrap::<_, Option<Vec<u8>>>(4).map(|bytes| {
-                        bytes
+            let mut rows = statement.query(params_from_iter(ids.iter().map(|r| r.0)))?;
+            while let Some(row) = rows.next()? {
+                let shortchecksum: Option<Checksum> = row
+                    .get::<_, Option<Vec<u8>>>(4)
+                    .transpose()
+                    .map(|bytes| {
+                        bytes?
                             .try_into()
-                            .expect("short checksum has wrong byte length")
-                    });
+                            .map_err(|_| anyhow!("short checksum has wrong byte length"))
+                    })
+                    .transpose()?;
+
                 let checksum: Option<Checksum> = row
-                    .get_unwrap::<_, Option<Vec<u8>>>(5)
-                    .map(|bytes| bytes.try_into().expect("checksum has wrong byte length"));
+                    .get::<_, Option<Vec<u8>>>(5)
+                    .transpose()
+                    .map(|bytes| {
+                        bytes?
+                            .try_into()
+                            .map_err(|_| anyhow!("checksum has wrong byte length"))
+                    })
+                    .transpose()?;
 
                 let file = FileData::new(
-                    RowId(row.get_unwrap(0)),
-                    Some(Directory::from(row.get_unwrap::<_, String>(6))),
-                    Some(Basename::from(row.get_unwrap::<_, String>(7))),
-                    Deviceno(row.get_unwrap(3)),
-                    Inode(row.get_unwrap(1)),
-                    Size(row.get_unwrap(2)),
+                    RowId(row.get(0)?),
+                    Some(Directory::from(row.get::<_, String>(6)?)),
+                    Some(Basename::from(row.get::<_, String>(7)?)),
+                    Deviceno(row.get(3)?),
+                    Inode(row.get(1)?),
+                    Size(row.get(2)?),
                     shortchecksum,
                     checksum,
                 );
@@ -229,6 +229,8 @@ pub(crate) mod file_db {
         // This error is useful for testing, but in the real world, file reads do fail:
         //if cfg!(debug_assertions) {
         debug_assert!(count == file_rows.len());
+
+        Ok(())
     }
 
     fn n_question_marks(n: usize) -> String {
@@ -242,7 +244,7 @@ pub(crate) mod file_db {
         id: RowId,
         fields: &[&str],
         values: &[&dyn ToSql],
-    ) {
+    ) -> Result<()> {
         trace!("Updating {:?} on row {}.", fields, id);
 
         assert!(fields.len() > 0);
@@ -255,14 +257,14 @@ pub(crate) mod file_db {
             .collect::<Vec<_>>()
             .join(", ");
 
-        let mut statement = conn
-            .prepare_cached(&format!(
-                "UPDATE files SET {} WHERE rowid = ?1",
-                update_parts
-            ))
-            .unwrap();
+        let mut statement = conn.prepare_cached(&format!(
+            "UPDATE files SET {} WHERE rowid = ?1",
+            update_parts
+        ))?;
 
         let params = std::iter::once::<&dyn ToSql>(&id.0).chain(values.iter().map(|val| *val));
-        statement.execute(params_from_iter(params)).unwrap();
+        statement.execute(params_from_iter(params))?;
+
+        Ok(())
     }
 }

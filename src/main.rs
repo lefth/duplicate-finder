@@ -3,13 +3,14 @@
 use std::fs;
 use std::sync::Arc;
 use std::time::Instant;
+
+use anyhow::{Context, Result};
 use structopt::StructOpt;
 
 mod file_db;
-use crate::process_matches::GetFiles;
 use crate::{
     file_db::file_db::init_connection,
-    process_matches::{GroupByFullChecksum, GroupByShortChecksum, PrintMatches},
+    process_matches::{GetFiles, GroupByFullChecksum, GroupByShortChecksum, PrintMatches},
 };
 mod process_matches;
 use crate::process_matches::ProcessMatches;
@@ -22,7 +23,7 @@ use log::{debug, error, info, trace, warn, LevelFilter};
 
 type JobId = (Inode, Deviceno);
 
-fn init(options: &Options) {
+fn init(options: &Options) -> Result<()> {
     let mut log_builder = env_logger::Builder::new();
     log_builder.filter_level(LevelFilter::Trace);
     if !cfg!(debug_assertions) {
@@ -66,30 +67,31 @@ fn init(options: &Options) {
             handler();
         }
     })
-    .expect("Error setting Ctrl-C handler");
+    .context("Error setting Ctrl-C handler")
 }
 
-fn main() {
+fn main() -> Result<()> {
     let mut options = Options::from_args();
 
-    init(&options);
+    init(&options)?;
 
-    let mut conn = init_connection(&mut options);
+    let mut conn = init_connection(&mut options)?;
 
     options.push_interrupt_handler(|| eprintln!("\nFinding all files"));
 
-    let candidate_groups = GetFiles::process_matches(None, &mut conn, &options);
+    let candidate_groups = GetFiles::process_matches(None, &mut conn, &options)?;
 
     let candidate_groups =
-        GroupByShortChecksum::process_matches(Some(candidate_groups), &mut conn, &options);
+        GroupByShortChecksum::process_matches(Some(candidate_groups), &mut conn, &options)?;
 
     let final_matches =
-        GroupByFullChecksum::process_matches(Some(candidate_groups), &mut conn, &options);
+        GroupByFullChecksum::process_matches(Some(candidate_groups), &mut conn, &options)?;
 
-    PrintMatches::process_matches(Some(final_matches), &mut conn, &options);
+    PrintMatches::process_matches(Some(final_matches), &mut conn, &options)?;
 
-    conn.close().unwrap();
+    conn.close().map_err(|err| err.1)?;
     if !options.keep_db_file && options.db_file != ":memory:" {
-        fs::remove_file(&options.db_file).unwrap();
+        fs::remove_file(&options.db_file)?;
     }
+    Ok(())
 }
