@@ -258,6 +258,7 @@ impl Directory {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone)]
+/// A filename that contains no directory component.
 pub(crate) struct Basename(pub PathBuf);
 
 impl Deref for Basename {

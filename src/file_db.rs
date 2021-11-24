@@ -76,7 +76,7 @@ pub(crate) mod file_db {
         let basename = basename
             .0
             .to_str()
-            .ok_or_else(|| anyhow!("Directory is not a valid string: {:#?}", basename))?;
+            .ok_or_else(|| anyhow!("Filename is not a valid string: {:#?}", basename.0))?;
 
         let directory_id = DIRECTORY_CACHE
             .with(|cache: &DirectoryCache| cache.borrow().get(&directory.0).cloned())
