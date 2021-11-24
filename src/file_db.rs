@@ -1,5 +1,5 @@
 pub(crate) mod file_db {
-    use std::{cell::RefCell, collections::HashMap, convert::TryInto, path::PathBuf};
+    use std::{cell::RefCell, collections::HashMap, convert::TryInto, path::PathBuf, sync::Arc};
 
     use anyhow::{anyhow, Result};
     use fallible_iterator::FallibleIterator;
@@ -167,14 +167,18 @@ pub(crate) mod file_db {
         Ok(file_id)
     }
 
-    pub(crate) fn get_matching_shortchecksums(conn: &Connection) -> Result<Vec<Vec<RowId>>> {
+    pub(crate) fn get_matching_shortchecksums(
+        conn: &Connection,
+        options: &Arc<Options>,
+    ) -> Result<Vec<Vec<RowId>>> {
         trace!("Getting row IDs that have checksums matching other rows.");
         let mut statement = conn.prepare(
-            "SELECT rowid, shortchecksum FROM files WHERE shortchecksum IS NOT NULL
+            "SELECT rowid, shortchecksum FROM file
+                WHERE shortchecksum IS NOT NULL AND size > ?
                 ORDER BY checksum",
         )?;
 
-        let rows = statement.query([])?.map(|row| {
+        let rows = statement.query([options.min_size.0])?.map(|row| {
             let row_id = RowId(row.get::<_, u64>(0)?);
             let bytes = row.get::<_, Vec<u8>>(1)?;
             let checksum: Result<Checksum> = bytes

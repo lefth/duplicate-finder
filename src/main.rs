@@ -82,7 +82,7 @@ fn main() -> Result<()> {
 
     let options = Arc::new(options);
     let candidate_groups = if options.resume_stage3 {
-        file_db::file_db::get_matching_shortchecksums(&conn)?
+        file_db::file_db::get_matching_shortchecksums(&conn, &options)?
     } else {
         let candidate_groups = GetFiles::process_matches(None, &mut conn, &options)?;
 
