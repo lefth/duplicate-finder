@@ -93,12 +93,26 @@ pub(crate) struct Options {
     // when files are changed during reading. Unlikely to be an issue.
     pub mmap: bool,
 
+    /// Tell the program how much memory it can use as buffers for reading files. This is
+    /// not necessary if using --mmap since large files won't be read to buffers anyway.
+    /// Small buffers are allowed but will slow down operation: --buffer-megabytes 0.2
+    #[structopt(long)]
+    pub buffer_megabytes: Option<f64>,
+
     // Shared state that's not from program arguments:
     #[structopt(skip)]
     pub interrupt_handlers: Arc<HandlerList>,
 
     #[structopt(skip)]
     pub db_must_exist: bool,
+
+    #[structopt(skip)]
+    /// The max total buffer memory for reading all files
+    pub total_buffer_max: u64,
+
+    #[structopt(skip)]
+    /// The max buffer for reading a file
+    pub buffer_max: u64,
 }
 
 impl Options {
@@ -115,6 +129,21 @@ impl Options {
             self.no_truncate_db = true;
             self.db_must_exist = true;
         }
+
+        // TODO: Tune these parameters. We don't want to run out of memory.
+        // We don't want to give all buffers the same size since we may have memory to spare
+        // and few large files. We don't want one very large file to prevent any other files
+        // from being read into a buffer.
+        // And all the I/O should be reevaluated after blake3 gets a parallel API that does not
+        // thrash on spinning hard drives.
+        self.total_buffer_max = if let Some(buffer_megabytes) = self.buffer_megabytes {
+            (buffer_megabytes * (1 << 20) as f64) as u64
+        } else if cfg!(target_arch = "x86_64") {
+            4_294_967_296
+        } else {
+            10 * 1 << 20
+        };
+        self.buffer_max = self.total_buffer_max / 3;
     }
 }
 
@@ -318,7 +347,10 @@ pub(crate) struct DuplicateGroup {
 }
 
 impl DuplicateGroup {
-    pub fn new(match_group: Vec<FileData>, options: &Options) -> Result<Option<DuplicateGroup>> {
+    pub fn new(
+        match_group: Vec<FileData>,
+        options: &Arc<Options>,
+    ) -> Result<Option<DuplicateGroup>> {
         type FileId = (Inode, Deviceno);
 
         assert!(match_group.len() > 1);

@@ -80,6 +80,7 @@ fn main() -> Result<()> {
 
     options.push_interrupt_handler(|| eprintln!("\nFinding all files"));
 
+    let options = Arc::new(options);
     let candidate_groups = if options.resume_stage3 {
         file_db::file_db::get_matching_shortchecksums(&conn)?
     } else {

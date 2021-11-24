@@ -35,15 +35,6 @@ use crate::{
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-// TODO: Tune these parameters. We don't want to run out of memory.
-// We don't want to give all buffers the same size since we may have memory to spare
-// and few large files. We don't want one very large file to prevent any other files
-// from being read into a buffer.
-// And all the I/O should be reevaluated after blake3 gets a parallel API that does not
-// thrash on spinning hard drives.
-const TOTAL_BUFFER_MAX: u64 = 4_294_967_296;
-const BUFFER_MAX: u64 = TOTAL_BUFFER_MAX / 3;
-
 // A file is uniquely identified by its device/inode.
 type FileId = (Inode, Deviceno);
 
@@ -57,14 +48,14 @@ pub(crate) trait ProcessMatches {
     fn process_matches_(
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
-        options: &Options,
+        options: &Arc<Options>,
     ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>>;
 
     /// Wrapper for [`process_matches_`].
     fn process_matches(
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
-        options: &Options,
+        options: &Arc<Options>,
     ) -> Result<Vec<Vec<RowId>>> {
         Ok(Self::process_matches_(candidate_groups, conn, options)?
             .into_iter()
@@ -83,7 +74,7 @@ impl ProcessMatches for GetFiles {
     fn process_matches_(
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
-        options: &Options,
+        options: &Arc<Options>,
     ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
         #[cfg(unix)]
         use std::os::unix::prelude::MetadataExt;
@@ -273,7 +264,7 @@ impl ProcessMatches for GroupByShortChecksum {
     fn process_matches_(
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
-        options: &Options,
+        options: &Arc<Options>,
     ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
         // Stage 2: new candidates are old candidates with the same md5sum of the
         // first chunk_size bytes. This will prevent the need to check the whole file's
@@ -297,7 +288,7 @@ impl ProcessMatches for GroupByFullChecksum {
     fn process_matches_(
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
-        options: &Options,
+        options: &Arc<Options>,
     ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
         // Stage 3: current candidates are those with matching size and short checksum.
         // New groups (not candidates) will be those with matching size and full checksums.
@@ -324,7 +315,7 @@ fn get_store_checksums(
     chunk_size: usize,
     candidate_groups: Option<Vec<Vec<RowId>>>,
     conn: &mut Connection,
-    options: &Options,
+    options: &Arc<Options>,
 ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
     assert!(candidate_groups.is_some());
     let candidate_groups =
@@ -430,7 +421,7 @@ fn store_checksums(
     chunk_size: usize,
     checksum_column_name: &str,
     conn: &mut Connection,
-    options: &Options,
+    options: &Arc<Options>,
 ) -> Result<HashMap<RowId, Checksum>> {
     // Each element is list of links that refer to the same file.
     // One checksum job is spawned for those hard links.
@@ -438,7 +429,8 @@ fn store_checksums(
 
     let pool = ThreadPool::default();
     let io_lock = Arc::new(Semaphore::new(options.max_io_threads as isize)); // Just one thread is fastest when doing I/O
-    let available_memory = Arc::new(AtomicU64::new(TOTAL_BUFFER_MAX));
+
+    let available_memory = Arc::new(AtomicU64::new(options.total_buffer_max));
     let (tx, rx) = channel();
     for file in files {
         let tx = tx.clone();
@@ -457,8 +449,8 @@ fn store_checksums(
                 let path = file.path().unwrap();
                 let io_lock = Arc::clone(&io_lock);
                 let filesize = file.size;
-                let mmap = options.mmap;
                 let max_io = options.max_io_threads;
+                let options = Arc::clone(options);
                 pool.execute(move || {
                     trace!("Starting job for file {:?}: {:?}", &path, pair);
                     let result = compute_checksum(
@@ -469,7 +461,7 @@ fn store_checksums(
                         filesize,
                         chunk_size,
                         pair,
-                        mmap,
+                        options,
                     );
                     counter.fetch_add(1, Relaxed);
                     tx.send((pair, result)).unwrap();
@@ -538,7 +530,7 @@ fn compute_checksum(
     filesize: Size,
     chunk_size: usize,
     job_id: FileId,
-    mmap: bool,
+    options: Arc<Options>,
 ) -> Result<[u8; blake3::OUT_LEN], std::io::Error> {
     let read_amount = if chunk_size == 0 {
         filesize.0
@@ -552,14 +544,14 @@ fn compute_checksum(
         io_lock.access()
     };
 
-    let digest = if mmap && read_amount >= (1 << 20) {
+    let digest = if options.mmap && read_amount >= (1 << 20) {
         let file = File::open(&path)?;
         let mmap = unsafe { Mmap::map(&file) }?;
         blake3::hash(&mmap)
     } else {
         // We should prefer to read files into one big buffer, so we can release the I/O lock
         // quickly. But we can only do that if it wouldn't make the program use too much memory.
-        let has_memory = read_amount < BUFFER_MAX
+        let has_memory = read_amount < options.buffer_max
             && available_memory
                 .fetch_update(Acquire, Acquire, |available_memory| {
                     if available_memory > read_amount {
@@ -569,6 +561,12 @@ fn compute_checksum(
                     }
                 })
                 .is_ok();
+
+        trace!(
+            "Not mmapping. Read amount is {}, will read into memory?: {}",
+            read_amount,
+            has_memory
+        );
 
         if has_memory {
             // We can read the whole file at once
@@ -607,7 +605,7 @@ impl ProcessMatches for PrintMatches {
     fn process_matches_(
         candidate_groups: Option<Vec<Vec<RowId>>>,
         conn: &mut Connection,
-        options: &Options,
+        options: &Arc<Options>,
     ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
         assert!(candidate_groups.is_some());
         let candidate_groups =
