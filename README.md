@@ -4,7 +4,8 @@
 
 A duplicate finder that works well on large and slow hard disks.
 
-This program is optimized for slow I/O and to avoid running out of memory.
+This program is optimized for slow I/O and to avoid running out of memory, in contrast to
+some other modern rust software that is optimized for SSDs.
 
 Warning: this is alpha-level software. It has not had a lot of real world testing.
 
@@ -69,3 +70,27 @@ Rust nightly is required:
 cargo +nightly install --git https://github.com/lefth/duplicates
 ```
 
+### Cross compilation
+I've found this program useful on ARM, so it can remove duplicates on NAS or router-mounted USB drives.
+The compilation procedure is slightly different for each target platform, and there is more than one way
+to accomplish the same goal. Here is my approach, for a musl-based system with hardware floating point
+support ("hf" string in the platform).
+
+Since the target's C library is musl, I needed to use the compiler toolchain from [musl-cross-make](https://github.com/richfelker/musl-cross-make).
+The exact target system was "arm-linux-musleabihf". I had to build version 1.1.24 since the most recent
+version won't link nicely with the version of musl that's included in the Rust toolchain. See: [problem](https://stackoverflow.com/questions/61934997/undefined-reference-to-stat-time64-when-cross-compiling-rust-project-on-mu), [bug report](https://github.com/rust-lang/rust/issues/72274).
+The musl-cross-make target and the cargo build target may not be exactly the same.
+
+If your target system is based on glibc, you will not need to use musl-cross-make, and your target strings
+will include "gnueabi" instead of "musleabi".
+
+I had to set `-mcpu` based on the target system's CPU info in `/proc/cpuinfo`, since the target string
+isn't specific enough for the compiler to know the chip's capabilities. This environment variable is not
+globally applicable (for all compilation), so it shouldn't be specified in the shell's global envirronment.
+
+Also setting the linker, my full build command is:
+```
+CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-musleabihf-gcc CC='arm-linux-musleabihf-gcc -mcpu=generic-armv7-a+vfpv3+neon' cargo build --target armv7-unknown-linux-musleabihf --release
+```
+
+If the build fails, it may be necessary to remove the `target` directory and try again.
