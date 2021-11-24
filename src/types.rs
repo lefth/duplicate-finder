@@ -25,66 +25,49 @@ type HandlerList = Mutex<Vec<Box<dyn Fn() + Send>>>;
 
 /// Options from arguments, and some shared global state.
 #[derive(StructOpt)]
-#[structopt(about = "Find duplicate files, especially on large filesystems")]
+#[structopt()]
+/// Find duplicate files, especially on large filesystems
 pub(crate) struct Options {
-    #[structopt(long, help = "Keep the database file from the previous run")]
+    #[structopt(long)]
+    /// Keep the database file from the previous run
     pub no_truncate_db: bool,
 
-    #[structopt(
-        short = "m",
-        long,
-        default_value = "4096",
-        help = "Minimum size (bytes) of files to check"
-    )]
+    #[structopt(short = "m", long, default_value = "4096")]
+    /// Minimum size (bytes) of files to check
     pub min_size: Size,
 
-    #[structopt(
-        short = "M",
-        long,
-        default_value = "100000000000",
-        help = "Skip files greater than this size, as they are probably not real files. \
-            0 bytes means skip nothing"
-    )]
+    #[structopt(short = "M", long, default_value = "100000000000")]
+    /// Skip files greater than this size, as they are probably not real files.
+    /// 0 bytes means skip nothing
     pub max_size: Size, // to prevent accidentally reading something like /proc/kcore.
 
-    #[structopt(default_value = ".", parse(try_from_os_str = get_existing_pathbuf),
-        help = "Paths to search for duplicates")]
+    #[structopt(default_value = ".", parse(try_from_os_str = get_existing_pathbuf))]
+    /// Paths to search for duplicates
     pub starting_paths: Vec<PathBuf>,
 
-    #[structopt(
-        long,
-        default_value = "metadata.sqlite",
-        help = "Choose a file, new or existing, for the database. :memory: is a special value"
-    )]
+    #[structopt(long, default_value = "metadata.sqlite")]
+    /// Choose a file, new or existing, for the database. :memory: is a special value
     pub db_file: String,
 
-    #[structopt(
-        short = "f",
-        long,
-        help = "Show duplicates that are already fully hardlinked (so no further space savings are possible)"
-    )]
+    #[structopt(short = "f", long)]
+    /// Show duplicates that are already fully hardlinked (so no further space savings are
+    /// possible)
     pub show_fully_hardlinked: bool,
 
-    #[structopt(
-        short,
-        long,
-        parse(from_occurrences),
-        help = "Reduces level of verbosity"
-    )]
+    #[structopt(short, long, parse(from_occurrences))]
+    /// Reduces level of verbosity
     pub quiet: i32,
 
-    #[structopt(
-        short,
-        long,
-        parse(from_occurrences),
-        help = "Increases level of verbosity"
-    )]
+    #[structopt(short, long, parse(from_occurrences))]
+    /// Increases level of verbosity
     pub verbose: i32,
 
-    #[structopt(short = "j", long, help = "Print output as JSON")]
+    #[structopt(short = "j", long)]
+    /// Print output as JSON
     pub print_json: bool,
 
-    #[structopt(short, long, help = "Don't delete the sqlite file. For debugging")]
+    #[structopt(short, long)]
+    /// Don't delete the sqlite file. For debugging
     pub keep_db_file: bool,
 
     #[structopt(
@@ -92,19 +75,17 @@ pub(crate) struct Options {
         long,
         default_value = "8",
         parse(try_from_str = get_positive_int),
-        help = "How many threads should read small files from disk at a time? \
-            Large files use one thread at a time.",
     )]
+    /// How many threads should read small files from disk at a time?
+    /// Large files use one thread at a time.
     pub max_io_threads: u32,
 
-    #[structopt(
-        long,
-        // The author of rigrep says mmap causes random SIGSEGV or SIGBUS
-        // when files are changed during reading. Unlikely
-        help = "Use mmap. This increases performance of reading large files on SSDs, \
-            but decreases performance on spinning drives. There is also a possibility \
-            of crashes when files are modified during reading.",
-    )]
+    #[structopt(long)]
+    /// Use mmap. This increases performance of reading large files on SSDs,
+    /// but decreases performance on spinning drives. There is also a possibility
+    /// of crashes when files are modified during reading.
+    // The author of rigrep says mmap causes random SIGSEGV or SIGBUS
+    // when files are changed during reading. Unlikely to be an issue.
     pub mmap: bool,
 
     // Shared state that's not from program arguments:
