@@ -23,7 +23,6 @@ use crate::file_data::file_data::FileData;
 
 type HandlerList = Mutex<Vec<Box<dyn Fn() + Send>>>;
 
-/// Options from arguments, and some shared global state.
 #[derive(StructOpt)]
 #[structopt()]
 /// Find duplicate files, especially on large filesystems
@@ -31,6 +30,12 @@ pub(crate) struct Options {
     #[structopt(long)]
     /// Keep the database file from the previous run
     pub no_truncate_db: bool,
+
+    #[structopt(long)]
+    /// Resume a previous operation at stage 3: this computes any necessary full checksums,
+    /// based on candidates (with matching short checksums) in an existing database file.
+    /// Implies --no-truncate-db
+    pub resume_stage3: bool,
 
     #[structopt(short = "m", long, default_value = "4096")]
     /// Minimum size (bytes) of files to check
@@ -91,6 +96,9 @@ pub(crate) struct Options {
     // Shared state that's not from program arguments:
     #[structopt(skip)]
     pub interrupt_handlers: Arc<HandlerList>,
+
+    #[structopt(skip)]
+    pub db_must_exist: bool,
 }
 
 impl Options {
@@ -100,6 +108,13 @@ impl Options {
         let mut handlers = self.interrupt_handlers.lock().unwrap();
         handlers.push(Box::new(handler));
         HandlerGuard(Arc::clone(&self.interrupt_handlers))
+    }
+
+    pub fn init(&mut self) {
+        if self.resume_stage3 {
+            self.no_truncate_db = true;
+            self.db_must_exist = true;
+        }
     }
 }
 

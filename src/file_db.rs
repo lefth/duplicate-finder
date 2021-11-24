@@ -2,11 +2,12 @@ pub(crate) mod file_db {
     use std::{cell::RefCell, collections::HashMap, convert::TryInto, path::PathBuf};
 
     use anyhow::{anyhow, Result};
+    use fallible_iterator::FallibleIterator;
     #[allow(unused_imports)]
     use log::{debug, error, info, trace, warn};
     use rusqlite::{
         ffi, params, params_from_iter, types::Null, Connection, DropBehavior, Error, ErrorCode,
-        ToSql, Transaction,
+        OpenFlags, ToSql, Transaction,
     };
 
     use crate::{file_data::file_data::FileData, types::*};
@@ -16,6 +17,11 @@ pub(crate) mod file_db {
     pub(crate) fn init_connection(options: &mut Options) -> Result<Connection> {
         let conn = if options.db_file == ":memory:" {
             Connection::open_in_memory()
+        } else if options.db_must_exist {
+            let mut flags: OpenFlags = OpenFlags::default();
+            flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
+            // Give an error if there's no current DB file:
+            Connection::open_with_flags(&options.db_file, flags)
         } else {
             Connection::open(&options.db_file)
         }?;
@@ -159,6 +165,61 @@ pub(crate) mod file_db {
         trace!("Inserted row {}", file_id);
 
         Ok(file_id)
+    }
+
+    pub(crate) fn get_matching_shortchecksums(conn: &Connection) -> Result<Vec<Vec<RowId>>> {
+        trace!("Getting row IDs that have checksums matching other rows.");
+        let mut statement = conn.prepare(
+            "SELECT rowid, shortchecksum FROM files WHERE shortchecksum IS NOT NULL
+                ORDER BY checksum",
+        )?;
+
+        let rows = statement.query([])?.map(|row| {
+            let row_id = RowId(row.get::<_, u64>(0)?);
+            let bytes = row.get::<_, Vec<u8>>(1)?;
+            let checksum: Result<Checksum> = bytes
+                .try_into()
+                .map_err(|_| anyhow!("shortchecksum has wrong byte length"));
+            Ok((row_id, checksum))
+        });
+
+        let mut curr_checksum = None;
+        let groups = rows.fold(vec![], |mut accum: Vec<Vec<RowId>>, (row_id, checksum)| {
+            let checksum = match checksum {
+                Ok(checksum) => checksum,
+                Err(error) => {
+                    warn!("Could not get shortchecksum: {}", error);
+                    return Ok(accum); // continue
+                }
+            };
+
+            let mut curr_group = match accum.pop() {
+                Some(curr_row) => curr_row,
+                None => {
+                    curr_checksum = Some(checksum);
+                    accum.push(vec![row_id]);
+                    return Ok(accum); // continue, this is the first group
+                }
+            };
+
+            if checksum
+                == curr_checksum.expect("Checksum must exist at this point, if there's a row")
+            {
+                curr_group.push(row_id);
+                accum.push(curr_group);
+            } else {
+                // curr_group (actually the prev group now) is valid only if the size > 1
+                if curr_group.len() > 1 {
+                    accum.push(curr_group);
+                }
+
+                // There's a new group, and a new current checksum
+                curr_checksum = Some(checksum);
+                accum.push(vec![row_id])
+            }
+            Ok(accum)
+        });
+        groups.map_err(|err| anyhow!(err))
     }
 
     pub(crate) fn get_files<F>(

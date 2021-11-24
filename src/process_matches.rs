@@ -315,11 +315,12 @@ impl ProcessMatches for GroupByFullChecksum {
 }
 
 /// Helper method to process and store both short and long checksums.
-/// Since their logic is identical.
+/// Since their logic is identical. Returns candidate groups based on
+/// the checksums.
 fn get_store_checksums(
     routine_description: &str,
     checksum_description: &'static str,
-    column_name: &str,
+    checksum_column_name: &str,
     chunk_size: usize,
     candidate_groups: Option<Vec<Vec<RowId>>>,
     conn: &mut Connection,
@@ -404,7 +405,7 @@ fn get_store_checksums(
             &need_checksums,
             Arc::clone(&counter),
             chunk_size,
-            column_name,
+            checksum_column_name,
             conn,
             options,
         )?);
@@ -427,7 +428,7 @@ fn store_checksums(
     files: &Vec<FileData>,
     counter: Arc<AtomicU32>,
     chunk_size: usize,
-    column_name: &str,
+    checksum_column_name: &str,
     conn: &mut Connection,
     options: &Options,
 ) -> Result<HashMap<RowId, Checksum>> {
@@ -512,7 +513,12 @@ fn store_checksums(
         );
         for rowid in files_in_queue.get(&pair).unwrap() {
             checksum_data.insert(*rowid, checksum);
-            update_record(&transaction, *rowid, &[&column_name], params![checksum])?;
+            update_record(
+                &transaction,
+                *rowid,
+                &[&checksum_column_name],
+                params![checksum],
+            )?;
         }
     }
     pool.join();

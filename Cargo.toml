@@ -20,6 +20,7 @@ threadpool = "1.8.1"
 bytesize = "1.0.0"
 memmap = "0.7.0"
 anyhow = "1.0.44"
+fallible-iterator = "0.2.0"
 
 [dependencies.rusqlite]
 version = "0.25.3"

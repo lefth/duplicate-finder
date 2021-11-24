@@ -72,6 +72,7 @@ fn init(options: &Options) -> Result<()> {
 
 fn main() -> Result<()> {
     let mut options = Options::from_args();
+    options.init();
 
     init(&options)?;
 
@@ -79,10 +80,15 @@ fn main() -> Result<()> {
 
     options.push_interrupt_handler(|| eprintln!("\nFinding all files"));
 
-    let candidate_groups = GetFiles::process_matches(None, &mut conn, &options)?;
+    let candidate_groups = if options.resume_stage3 {
+        file_db::file_db::get_matching_shortchecksums(&conn)?
+    } else {
+        let candidate_groups = GetFiles::process_matches(None, &mut conn, &options)?;
 
-    let candidate_groups =
-        GroupByShortChecksum::process_matches(Some(candidate_groups), &mut conn, &options)?;
+        let candidate_groups =
+            GroupByShortChecksum::process_matches(Some(candidate_groups), &mut conn, &options)?;
+        candidate_groups
+    };
 
     let final_matches =
         GroupByFullChecksum::process_matches(Some(candidate_groups), &mut conn, &options)?;

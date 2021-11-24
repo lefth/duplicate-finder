@@ -216,6 +216,7 @@ dependencies = [
  "bytesize",
  "ctrlc",
  "env_logger",
+ "fallible-iterator",
  "log",
  "memmap",
  "multi-semaphore",
