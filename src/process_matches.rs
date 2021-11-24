@@ -246,8 +246,11 @@ impl ProcessMatches for GetFiles {
                             get_device_no_win(&md),
                         ),
                         size,
-                    )?;
-                    row_ids.entry(size).or_default().push(row_id);
+                    );
+                    match row_id {
+                        Ok(row_id) => row_ids.entry(size).or_default().push(row_id),
+                        Err(error) => warn!("Could not add file: {}", error),
+                    }
                 }
             }
         }
