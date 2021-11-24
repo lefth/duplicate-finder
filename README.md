@@ -86,7 +86,9 @@ will include "gnueabi" instead of "musleabi".
 
 I had to set `-mcpu` based on the target system's CPU info in `/proc/cpuinfo`, since the target string
 isn't specific enough for the compiler to know the chip's capabilities. This environment variable is not
-globally applicable (for all compilation), so it shouldn't be specified in the shell's global envirronment.
+globally applicable (for all compilation), so it shouldn't be specified in the shell's global environment.
+If there is a way to simplify this (to make dependencies compile without needing to set CC),
+please file an issue or make a pull request.
 
 Also setting the linker, my full build command is:
 ```
