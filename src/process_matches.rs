@@ -216,7 +216,9 @@ impl ProcessMatches for GetFiles {
                 } else {
                     #[cfg(windows)]
                     fn get_device_no_win(md: &Metadata) -> u64 {
-                        md.volume_serial_number()? as u64
+                        md.volume_serial_number()
+                            .expect("Metadata must not be created with `DirEntry::metadata`")
+                            as u64
                     }
                     let row_id = add_file(
                         &transaction,
@@ -228,7 +230,8 @@ impl ProcessMatches for GetFiles {
                             // This needs to be built with nightly on Windows--
                             // https://github.com/rust-lang/rust/issues/63010
                             #[cfg(windows)]
-                            md.file_index()?,
+                            md.file_index()
+                                .expect("Metadata must not be created with `DirEntry::metadata`"),
                         ),
                         Deviceno(
                             #[cfg(unix)]
