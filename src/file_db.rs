@@ -12,8 +12,6 @@ pub(crate) mod file_db {
 
     use crate::{file_data::file_data::FileData, types::*};
 
-    pub(crate) static TABLE_NAME: &str = "files";
-
     pub(crate) fn init_connection(options: &mut Options) -> Result<Connection> {
         let conn = if options.db_file == ":memory:" {
             Connection::open_in_memory()
@@ -28,11 +26,13 @@ pub(crate) mod file_db {
 
         // much bigger cache
         conn.execute("PRAGMA cache_size = 40000", [])?;
+        conn.execute("PRAGMA encoding = \"UTF-8\"", [])?;
 
-        // Create a table for files and a lookup for their directories.
-        // Don't add indices, they are implicit as the "rowid" column:
+        // Create a table for files and a lookup for their directories. Don't add indices;
+        // they are implicit as the "rowid" column. Also note that these types are just annotations--
+        // any column can hold any type, so we can store binary path names in TEXT fields.
         for &(table_name, table_spec) in [("directories", "(directory TEXT NOT NULL UNIQUE)"),
-            (&TABLE_NAME, "(basename TEXT NOT NULL, dir_id INTEGER64 NOT NULL, inode INTEGER64 NOT NULL, \
+            ("files", "(basename TEXT NOT NULL, dir_id INTEGER64 NOT NULL, inode INTEGER64 NOT NULL, \
                 size INTEGER64 NOT NULL, deviceno INTEGER64 NOT NULL, shortchecksum BLOB, checksum BLOB, \
                 UNIQUE(basename, dir_id))")].iter()
         {
@@ -73,10 +73,6 @@ pub(crate) mod file_db {
             // This function is only called from one thread, and cache misses still wouldn't break anything
             static DIRECTORY_CACHE: DirectoryCache = Default::default();
         }
-        let basename = basename
-            .0
-            .to_str()
-            .ok_or_else(|| anyhow!("Filename is not a valid string: {:#?}", basename.0))?;
 
         let directory_id = DIRECTORY_CACHE
             .with(|cache: &DirectoryCache| cache.borrow().get(&directory.0).cloned())
@@ -88,7 +84,7 @@ pub(crate) mod file_db {
                     "INSERT INTO directories \
                         (directory) VALUES (:directory)",
                 )?;
-                dir_stmt.execute(params![directory.to_str()?])
+                dir_stmt.execute(params![directory])
             };
 
             // Handle directory IDs that already exist:
@@ -100,7 +96,7 @@ pub(crate) mod file_db {
                     // Row exists. This is not a real problem:
                     let mut statement =
                         conn.prepare_cached("SELECT rowid FROM directories WHERE directory = ?1")?;
-                    statement.query_row(params![directory.to_str()?], |row| row.get(0))?
+                    statement.query_row(params![directory], |row| row.get(0))?
                 }
                 Err(err) => panic!("Error adding directory: {}", err),
             };
@@ -256,8 +252,8 @@ pub(crate) mod file_db {
             while let Some(row) = rows.next()? {
                 let file = FileData::new(
                     RowId(row.get(0)?),
-                    Some(Directory::from(row.get::<_, String>(6)?)),
-                    Some(Basename::from(row.get::<_, String>(7)?)),
+                    Some(row.get::<_, Directory>(6)?),
+                    Some(row.get::<_, Basename>(7)?),
                     Deviceno(row.get(3)?),
                     Inode(row.get(1)?),
                     Size(row.get(2)?),

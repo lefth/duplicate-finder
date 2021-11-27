@@ -85,18 +85,6 @@ impl ProcessMatches for GetFiles {
 
         info!("Stage 1: Getting all files and file stat info");
 
-        /// Confirm that a path is a valid string, so the final output will be correct.
-        fn confirm_string_warn(path: &PathBuf) -> bool {
-            if path.to_str().is_none() {
-                warn!(
-                    "Could not convert path to UTF-8 string, skipping: {:?}",
-                    path
-                );
-                return false;
-            }
-            return true;
-        }
-
         let start_time = Instant::now();
         let count = Arc::new(AtomicI32::new(0));
         let _handler_guard = {
@@ -123,10 +111,6 @@ impl ProcessMatches for GetFiles {
         while let Some(dir) = dirs_to_explore.pop() {
             assert!(dir.is_dir());
             trace!("Exploring dir: {:?}", dir);
-
-            if !confirm_string_warn(&dir) {
-                continue;
-            }
 
             let canonical_path = match dir.canonicalize() {
                 Ok(canonical_path) => canonical_path,
@@ -166,9 +150,6 @@ impl ProcessMatches for GetFiles {
                 }
 
                 let path = dir_entry.path();
-                if !confirm_string_warn(&dir) {
-                    continue;
-                }
 
                 // NOTE: do not use dir_entry.metadata() because it follows symlinks and will
                 // lead to infinite loops. It also doesn't contain all the information if used

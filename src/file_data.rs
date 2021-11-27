@@ -49,15 +49,16 @@ pub mod file_data {
         }
 
         /// Get the path as a string: dir/basename.
-        /// Error if .unwrap() would panic or if the path isn't a valid UTF-8 string
+        /// If the path isn't a valid UTF-8 string, warn and proceed anyway.
         pub fn path_str(&self) -> Result<String> {
             let path = self.path()?;
-            path.to_str().map(|s| s.to_string()).ok_or_else(|| {
-                anyhow!(
-                    "Path is not representable as utf-8, should be skipped: {:#?}",
+            Ok(path.to_str().map(|str| str.to_owned()).unwrap_or_else(|| {
+                warn!(
+                    "Output path is not fully representable as utf-8: {:#?}",
                     &path
-                )
-            })
+                );
+                path.display().to_string()
+            }))
         }
     }
 }

@@ -11,8 +11,16 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{anyhow, Result};
-use rusqlite::*;
+#[cfg(unix)]
+use std::os::unix::prelude::{OsStrExt, OsStringExt};
+#[cfg(windows)]
+use std::os::windows::ffi::{OsStrExt, OsStringExt};
+
+use anyhow::Result;
+use rusqlite::{
+    types::{FromSql, FromSqlError, ToSqlOutput, Value, ValueRef},
+    *,
+};
 use serde::{Deserialize, Serialize};
 use structopt::*;
 
@@ -236,9 +244,15 @@ impl Deref for Directory {
     }
 }
 
-impl From<String> for Directory {
-    fn from(str: String) -> Self {
-        Directory(PathBuf::from(str))
+impl ToSql for Directory {
+    fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
+        to_sql(&self.0)
+    }
+}
+
+impl FromSql for Directory {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        from_sql_column_result(value).map(Directory)
     }
 }
 
@@ -248,18 +262,21 @@ impl<T: ?Sized + AsRef<OsStr>> From<&T> for Directory {
     }
 }
 
-impl Directory {
-    /// Get the string as a Result instead of Option. Convenient for exception handling.
-    pub fn to_str(&self) -> Result<&str> {
-        self.0
-            .to_str()
-            .ok_or_else(|| anyhow!("Could not convert to string: {:#?}", self.0))
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone)]
 /// A filename that contains no directory component.
 pub(crate) struct Basename(pub PathBuf);
+
+impl ToSql for Basename {
+    fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
+        to_sql(&self.0)
+    }
+}
+
+impl FromSql for Basename {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        from_sql_column_result(value).map(Basename)
+    }
+}
 
 impl Deref for Basename {
     type Target = PathBuf;
@@ -271,12 +288,6 @@ impl Deref for Basename {
 impl AsRef<Path> for Basename {
     fn as_ref(&self) -> &Path {
         self.0.as_ref()
-    }
-}
-
-impl From<String> for Basename {
-    fn from(str: String) -> Self {
-        Basename(PathBuf::from(str))
     }
 }
 
@@ -389,4 +400,91 @@ impl DuplicateGroup {
             redundant_bytes,
         }))
     }
+}
+
+fn to_sql(path: &'_ Path) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
+    if let Some(s) = path.to_str() {
+        Ok(ToSqlOutput::Borrowed(ValueRef::Text(s.as_bytes())))
+    } else {
+        let bytes = str_to_blob(path.as_os_str());
+        debug!(
+            "Cannot represent path as string; will use bytes: {:?}",
+            path
+        );
+        Ok(ToSqlOutput::Owned(Value::Blob(bytes)))
+    }
+}
+
+fn from_sql_column_result(
+    value: rusqlite::types::ValueRef<'_>,
+) -> rusqlite::types::FromSqlResult<PathBuf> {
+    match value {
+        rusqlite::types::ValueRef::Text(text) => {
+            // safe to unwrap; Infallible
+            Ok(PathBuf::from(&String::from_utf8(text.to_vec()).expect(
+                "Malformed data in DB: Text should be valid UTF-8",
+            )))
+        }
+        rusqlite::types::ValueRef::Blob(blob) => {
+            let s = blob_to_str(blob).map_err(|err| FromSqlError::Other(Box::from(err)))?;
+            Ok(PathBuf::from(s))
+        }
+        _ => Err(FromSqlError::InvalidType),
+    }
+}
+
+#[cfg(windows)]
+/// Interpret a byte string as a possibly invalid UTF-16 string.
+fn blob_to_str(blob: &[u8]) -> Result<OsString> {
+    if blob.len() % 2 == 1 {
+        anyhow!(
+            "Blob can't be parsed to filename: uneven byte length: {:?}",
+            blob
+        );
+    }
+    let wide: Vec<u16> = blob.chunks(2).map(combine_bytes).collect();
+    Ok(OsString::from_wide(&wide))
+}
+
+#[cfg(unix)]
+/// Interpret a byte string as a possibly invalid UTF-8 path.
+fn blob_to_str(blob: &[u8]) -> Result<OsString> {
+    Ok(OsString::from_vec(blob.to_vec()))
+}
+
+#[cfg(windows)]
+/// Convert a filename str to bytes.
+fn str_to_blob(s: &OsStr) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for item_u16 in s.encode_wide() {
+        let (a, b) = split_bytes(item_u16);
+        bytes.push(a);
+        bytes.push(b);
+    }
+    bytes
+}
+
+#[cfg(unix)]
+/// Convert a filename str to bytes.
+fn str_to_blob(s: &OsStr) -> Vec<u8> {
+    let bytes = s.as_bytes();
+    bytes.to_vec()
+}
+
+#[cfg_attr(unix, allow(dead_code))] // only needed for windows
+fn combine_bytes(bytes: &[u8]) -> u16 {
+    (bytes[0] as u16) << 8 | bytes[1] as u16
+}
+
+#[cfg_attr(unix, allow(dead_code))] // only needed for windows
+fn split_bytes(n: u16) -> (u8, u8) {
+    let a = (n >> 8) as u8;
+    let b = n as u8;
+    (a, b)
+}
+
+#[test]
+fn test_u8_u16_conversion() {
+    assert_eq!(combine_bytes(&[0x12, 0xAB]), 0x12AB_u16);
+    assert_eq!(split_bytes(0x12AB_u16), (0x12, 0xAB));
 }
