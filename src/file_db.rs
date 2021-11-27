@@ -254,26 +254,6 @@ pub(crate) mod file_db {
 
             let mut rows = statement.query(params_from_iter(ids.iter().map(|r| r.0)))?;
             while let Some(row) = rows.next()? {
-                let shortchecksum: Option<Checksum> = row
-                    .get::<_, Option<Vec<u8>>>(4)
-                    .transpose()
-                    .map(|bytes| {
-                        bytes?
-                            .try_into()
-                            .map_err(|_| anyhow!("short checksum has wrong byte length"))
-                    })
-                    .transpose()?;
-
-                let checksum: Option<Checksum> = row
-                    .get::<_, Option<Vec<u8>>>(5)
-                    .transpose()
-                    .map(|bytes| {
-                        bytes?
-                            .try_into()
-                            .map_err(|_| anyhow!("checksum has wrong byte length"))
-                    })
-                    .transpose()?;
-
                 let file = FileData::new(
                     RowId(row.get(0)?),
                     Some(Directory::from(row.get::<_, String>(6)?)),
@@ -281,8 +261,6 @@ pub(crate) mod file_db {
                     Deviceno(row.get(3)?),
                     Inode(row.get(1)?),
                     Size(row.get(2)?),
-                    shortchecksum,
-                    checksum,
                 );
                 callback(file);
                 count += 1;

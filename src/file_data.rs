@@ -10,14 +10,11 @@ pub mod file_data {
     #[derive(Debug)]
     pub(crate) struct FileData {
         pub row_id: RowId,
-        pub dir_id: Option<DirectoryId>,
         pub dir: Option<Directory>,
         pub basename: Option<Basename>,
         pub deviceno: Deviceno,
         pub inode: Inode,
         pub size: Size,
-        pub shortchecksum: Option<Checksum>,
-        pub checksum: Option<Checksum>,
     }
 
     impl FileData {
@@ -28,19 +25,14 @@ pub mod file_data {
             deviceno: Deviceno,
             inode: Inode,
             size: Size,
-            shortchecksum: Option<Checksum>,
-            checksum: Option<Checksum>,
         ) -> FileData {
             FileData {
                 row_id,
-                dir_id: None,
                 dir,
                 basename,
                 deviceno,
                 inode,
                 size,
-                shortchecksum,
-                checksum,
             }
         }
 
