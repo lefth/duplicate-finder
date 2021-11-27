@@ -81,18 +81,23 @@ fn main() -> Result<()> {
     options.push_interrupt_handler(|| eprintln!("\nFinding all files"));
 
     let options = Arc::new(options);
-    let candidate_groups = if options.resume_stage3 {
-        file_db::file_db::get_matching_shortchecksums(&conn, &options)?
+    let final_matches = if options.resume_stage4 {
+        file_db::file_db::get_matching_checksums(&conn, "checksum", &options)?
     } else {
-        let candidate_groups = GetFiles::process_matches(None, &mut conn, &options)?;
+        let candidate_groups = if options.resume_stage3 {
+            file_db::file_db::get_matching_checksums(&conn, "shortchecksum", &options)?
+        } else {
+            let candidate_groups = GetFiles::process_matches(None, &mut conn, &options)?;
 
-        let candidate_groups =
-            GroupByShortChecksum::process_matches(Some(candidate_groups), &mut conn, &options)?;
-        candidate_groups
+            let candidate_groups =
+                GroupByShortChecksum::process_matches(Some(candidate_groups), &mut conn, &options)?;
+            candidate_groups
+        };
+
+        let final_matches =
+            GroupByFullChecksum::process_matches(Some(candidate_groups), &mut conn, &options)?;
+        final_matches
     };
-
-    let final_matches =
-        GroupByFullChecksum::process_matches(Some(candidate_groups), &mut conn, &options)?;
 
     PrintMatches::process_matches(Some(final_matches), &mut conn, &options)?;
 

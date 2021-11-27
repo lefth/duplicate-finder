@@ -45,6 +45,12 @@ pub(crate) struct Options {
     /// Implies --no-truncate-db
     pub resume_stage3: bool,
 
+    #[structopt(long)]
+    /// Resume a previous operation at stage 4: this prints results based on checksums that
+    /// have already been computed. Useful for changing the output format.
+    /// Implies --no-truncate-db
+    pub resume_stage4: bool,
+
     #[structopt(short = "m", long, default_value = "4096")]
     /// Minimum size (bytes) of files to check
     pub min_size: Size,
@@ -133,7 +139,7 @@ impl Options {
     }
 
     pub fn init(&mut self) {
-        if self.resume_stage3 {
+        if self.resume_stage3 || self.resume_stage4 {
             self.no_truncate_db = true;
             self.db_must_exist = true;
         }

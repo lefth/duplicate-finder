@@ -163,23 +163,25 @@ pub(crate) mod file_db {
         Ok(file_id)
     }
 
-    pub(crate) fn get_matching_shortchecksums(
+    pub(crate) fn get_matching_checksums(
         conn: &Connection,
+        column_name: &str,
         options: &Arc<Options>,
     ) -> Result<Vec<Vec<RowId>>> {
         trace!("Getting row IDs that have checksums matching other rows.");
-        let mut statement = conn.prepare(
-            "SELECT rowid, shortchecksum FROM file
-                WHERE shortchecksum IS NOT NULL AND size > ?
-                ORDER BY shortchecksum",
-        )?;
+        let mut statement = conn.prepare(&format!(
+            "SELECT rowid, {} FROM file
+                WHERE {} IS NOT NULL AND size > ?
+                ORDER BY {}",
+            column_name, column_name, column_name,
+        ))?;
 
         let rows = statement.query([options.min_size.0])?.map(|row| {
             let row_id = RowId(row.get::<_, u64>(0)?);
             let bytes = row.get::<_, Vec<u8>>(1)?;
             let checksum: Result<Checksum> = bytes
                 .try_into()
-                .map_err(|_| anyhow!("shortchecksum has wrong byte length"));
+                .map_err(|_| anyhow!("{} has wrong byte length", column_name));
             Ok((row_id, checksum))
         });
 
@@ -188,7 +190,7 @@ pub(crate) mod file_db {
             let checksum = match checksum {
                 Ok(checksum) => checksum,
                 Err(error) => {
-                    warn!("Could not get shortchecksum: {}", error);
+                    warn!("Could not get {}: {}", column_name, error);
                     return Ok(accum); // continue
                 }
             };
