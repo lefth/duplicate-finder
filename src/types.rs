@@ -74,7 +74,9 @@ pub(crate) struct Options {
     pub show_fully_hardlinked: bool,
 
     #[structopt(short, long, parse(from_occurrences))]
-    /// Reduces level of verbosity
+    /// Reduces level of verbosity. `-qqq` will suppress printing duplicate files.
+    /// The computation will still happen, and JSON may still be saved.
+    // (In debug mode it would be `-qqqq` for total silence)
     pub quiet: i32,
 
     #[structopt(short, long, parse(from_occurrences))]

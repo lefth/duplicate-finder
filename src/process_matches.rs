@@ -18,6 +18,7 @@ use std::{
 
 use anyhow::Result;
 use bytesize::ByteSize;
+use log::LevelFilter;
 use memmap::Mmap;
 use multi_semaphore::Semaphore;
 use rusqlite::{params, Connection};
@@ -632,22 +633,24 @@ impl ProcessMatches for PrintMatches {
             }
         }
 
-        for group in &processed_groups {
-            // Display this group of duplicate files:
-            for hardlinked_subgroup in &group.duplicates {
-                if hardlinked_subgroup.len() > 1 {
-                    println!("Hard linked duplicates:");
-                    for filename in hardlinked_subgroup {
-                        println!("\t{}", filename);
-                    }
-                } else {
-                    for filename in hardlinked_subgroup {
-                        println!("{}", filename);
+        if log::max_level() != LevelFilter::Off {
+            for group in &processed_groups {
+                // Display this group of duplicate files:
+                for hardlinked_subgroup in &group.duplicates {
+                    if hardlinked_subgroup.len() > 1 {
+                        println!("Hard linked duplicates:");
+                        for filename in hardlinked_subgroup {
+                            println!("\t{}", filename);
+                        }
+                    } else {
+                        for filename in hardlinked_subgroup {
+                            println!("{}", filename);
+                        }
                     }
                 }
-            }
 
-            println!("");
+                println!("");
+            }
         }
 
         debug!("Note: got {} files.", file_count);
