@@ -62,12 +62,12 @@ duplicates ~ --min-size 1 --db-file metadata.sqlite --keep-db-file -v --show-ful
 
 ### On Linux, Mac, or WSL:
 ```
-cargo install --git https://github.com/lefth/duplicates
+cargo install --git https://github.com/lefth/duplicate-finder
 ```
 ### On Windows:
 Rust nightly is required:
 ```
-cargo +nightly install --git https://github.com/lefth/duplicates
+cargo +nightly install --git https://github.com/lefth/duplicate-finder
 ```
 
 ### Cross compilation
