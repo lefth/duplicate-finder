@@ -171,7 +171,7 @@ pub(crate) mod file_db {
         let mut statement = conn.prepare(
             "SELECT rowid, shortchecksum FROM file
                 WHERE shortchecksum IS NOT NULL AND size > ?
-                ORDER BY checksum",
+                ORDER BY shortchecksum",
         )?;
 
         let rows = statement.query([options.min_size.0])?.map(|row| {
