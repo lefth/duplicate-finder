@@ -81,9 +81,9 @@ pub(crate) struct Options {
     /// Increases level of verbosity
     pub verbose: i32,
 
-    #[structopt(short = "j", long)]
-    /// Print output as JSON
-    pub print_json: bool,
+    #[structopt(short = "j", long = "write_json")]
+    /// Save output to a file as JSON
+    pub save_json_filename: Option<OsString>,
 
     #[structopt(short, long)]
     /// Don't delete the sqlite file. For debugging

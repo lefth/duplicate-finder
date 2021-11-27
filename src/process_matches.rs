@@ -3,7 +3,7 @@ use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
     fs::{self, symlink_metadata, File},
-    io::Read,
+    io::{BufWriter, Read, Write},
     sync::{
         atomic::{AtomicU32, AtomicU64, Ordering::*},
         mpsc::channel,
@@ -612,36 +612,42 @@ impl ProcessMatches for PrintMatches {
             }
         }
 
-        if options.print_json {
-            serde_json::to_writer_pretty(std::io::stdout(), &processed_groups)?;
+        if let Some(json_filename) = options.save_json_filename.as_ref() {
+            let file = File::create(json_filename)?;
+            let mut writer = BufWriter::new(file);
+            serde_json::to_writer_pretty(&mut writer, &processed_groups)?;
+            writer.flush()?;
         } else {
-            for group in processed_groups {
+            // If not writing to JSON, it's more important that the stdout output be correct:
+            for group in &processed_groups {
                 for filename in group.duplicates.iter().flatten() {
                     if filename.contains("\n") {
                         warn!(
-                            "One of the duplicate filenames contains a newline. Try --print-json \
+                            "One of the duplicate filenames contains a newline. Try --write-json \
                             for parsable output"
                         );
                         break;
                     }
                 }
+            }
+        }
 
-                // Display this group of duplicate files:
-                println!("");
-
-                for hardlinked_subgroup in group.duplicates {
-                    if hardlinked_subgroup.len() > 1 {
-                        println!("Hard linked duplicates:");
-                        for filename in hardlinked_subgroup {
-                            println!("\t{}", filename);
-                        }
-                    } else {
-                        for filename in hardlinked_subgroup {
-                            println!("{}", filename);
-                        }
+        for group in &processed_groups {
+            // Display this group of duplicate files:
+            for hardlinked_subgroup in &group.duplicates {
+                if hardlinked_subgroup.len() > 1 {
+                    println!("Hard linked duplicates:");
+                    for filename in hardlinked_subgroup {
+                        println!("\t{}", filename);
+                    }
+                } else {
+                    for filename in hardlinked_subgroup {
+                        println!("{}", filename);
                     }
                 }
             }
+
+            println!("");
         }
 
         debug!("Note: got {} files.", file_count);
