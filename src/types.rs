@@ -8,6 +8,7 @@ use std::{
     path::{Path, PathBuf},
     str::FromStr,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 #[cfg(unix)]
@@ -15,7 +16,7 @@ use std::os::unix::prelude::{OsStrExt, OsStringExt};
 #[cfg(windows)]
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{bail, Context, Result};
 use rusqlite::{
     types::{FromSql, FromSqlError, ToSqlOutput, Value, ValueRef},
     *,
@@ -127,6 +128,12 @@ pub(crate) struct Options {
     #[structopt(long, hidden = true)]
     pub log: bool,
 
+    /// Don't redo checksums that are already stored in a database.
+    /// Useful for resuming an operation without knowing at what stage it stopped,
+    /// or adding additional paths to an operation that was completed.
+    #[structopt(long)]
+    pub remember_checksums: bool,
+
     // Shared state that's not from program arguments:
     #[structopt(skip)]
     pub interrupt_handlers: Arc<HandlerList>,
@@ -163,6 +170,17 @@ impl Options {
         if self.resume_stage3 || self.resume_stage4 {
             self.no_truncate_db = true;
             self.db_must_exist = true;
+        }
+
+        if self.remember_checksums && !self.no_truncate_db {
+            info!("Assuming --no-truncate-db since --remember-checksums was used.");
+            self.no_truncate_db = true;
+        }
+
+        if self.remember_checksums && !self.keep_db_file {
+            warn!("Do you really want to remember checksums now but delete the DB afterwards?");
+            warn!("Press Ctrl+c to stop execution and re-run with --keep-db-file.");
+            std::thread::sleep(Duration::from_secs(3));
         }
 
         if self.dry_run {
@@ -408,7 +426,7 @@ fn to_sql(path: &'_ Path) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
     if let Some(s) = path.to_str() {
         Ok(ToSqlOutput::Borrowed(ValueRef::Text(s.as_bytes())))
     } else {
-        let bytes = str_to_blob(path.as_os_str());
+        let bytes = str_to_bytes(path.as_os_str());
         debug!(
             "Cannot represent path as string; will use bytes: {:?}",
             path
@@ -428,7 +446,7 @@ fn from_sql_column_result(
             )))
         }
         rusqlite::types::ValueRef::Blob(blob) => {
-            let s = blob_to_str(blob).map_err(|err| FromSqlError::Other(Box::from(err)))?;
+            let s = bytes_to_str(blob).map_err(|err| FromSqlError::Other(Box::from(err)))?;
             Ok(PathBuf::from(s))
         }
         _ => Err(FromSqlError::InvalidType),
@@ -437,7 +455,7 @@ fn from_sql_column_result(
 
 /// Interpret a byte string as a possibly invalid UTF-8 path,
 /// or as a possibly invalid UTF-16 string on Windows
-pub(crate) fn blob_to_str(blob: &[u8]) -> Result<OsString> {
+pub(crate) fn bytes_to_str(blob: &[u8]) -> Result<OsString> {
     #[cfg(unix)]
     {
         Ok(OsString::from_vec(blob.to_vec()))
@@ -445,7 +463,7 @@ pub(crate) fn blob_to_str(blob: &[u8]) -> Result<OsString> {
     #[cfg(windows)]
     {
         if blob.len() % 2 == 1 {
-            bail!(
+            anyhow::bail!(
                 "Blob can't be parsed to filename: uneven byte length: {:?}",
                 blob
             );
@@ -456,7 +474,7 @@ pub(crate) fn blob_to_str(blob: &[u8]) -> Result<OsString> {
 }
 
 /// Convert a filename str to bytes.
-fn str_to_blob(s: &OsStr) -> Vec<u8> {
+fn str_to_bytes(s: &OsStr) -> Vec<u8> {
     #[cfg(unix)]
     {
         let bytes = s.as_bytes();
@@ -497,24 +515,24 @@ fn test_fname_conversion() -> Result<()> {
     // These are all valid UTF-8 of course:
     for s in ["hello", "", "✔️ ❤️ ☆"] {
         let s = OsString::from_str(s).unwrap(); // Err is Infallible
-        assert_eq!(&s, &blob_to_str(&str_to_blob(&s))?);
+        assert_eq!(&s, &bytes_to_str(&str_to_bytes(&s))?);
     }
 
     // This is an invalid utf-8 string:
     let b = vec![0x66, 0x6f, 0x80, 0x6f];
-    assert_eq!(b, str_to_blob(&blob_to_str(&b)?));
+    assert_eq!(b, str_to_bytes(&bytes_to_str(&b)?));
 
     #[cfg(windows)]
     {
         // invalid byte length
         let source = b"x";
-        let s = blob_to_str(source);
+        let s = bytes_to_str(source);
         assert!(s.is_err());
 
         // invalid UTF-16 from rust OsString documentation
         let source = [0x0066, 0x006f, 0xD800, 0x006f];
         let s = OsString::from_wide(&source[..]);
-        assert_eq!(&s, &blob_to_str(&str_to_blob(&s))?);
+        assert_eq!(&s, &bytes_to_str(&str_to_bytes(&s))?);
     }
 
     Ok(())

@@ -40,7 +40,10 @@ Warning: this is alpha-level software. It has not had a lot of real world testin
                                             during reading
         --no-truncate-db                    Keep the database file from the previous run
     -q, --quiet                             Reduces level of verbosity.
-                                            The computation will still happen, and JSON may still be saved
+        --remember-checksums                Don't redo checksums that are already stored in a database.
+                                            Useful for resuming an operation without knowing at what stage
+                                            it stopped, or adding additional paths to an operation that
+                                            was completed
         --resume-stage3                     Resume a previous operation at stage 3: this computes any
                                             necessary full checksums, based on candidates (with matching
                                             short checksums) in an existing database file. Implies
@@ -136,4 +139,4 @@ CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-musleabihf-gcc CC='
 
 If the build fails, it may be necessary to remove the `target` directory and try again.
 
-<!-- vim: textwidth=106: -->
+<!-- vim: textwidth=106 expandtab: -->

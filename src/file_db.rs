@@ -2,7 +2,6 @@ pub(crate) mod file_db {
     use std::{
         cell::RefCell,
         collections::HashMap,
-        convert::TryInto,
         path::PathBuf,
         sync::{
             atomic::{AtomicU64, Ordering::Relaxed},
@@ -76,6 +75,7 @@ pub(crate) mod file_db {
         inode: Inode,
         deviceno: Deviceno,
         size: Size,
+        options: &Options,
     ) -> Result<RowId> {
         type DirectoryCache = RefCell<HashMap<PathBuf, DirectoryId>>;
         thread_local! {
@@ -148,14 +148,26 @@ pub(crate) mod file_db {
             )) => {
                 // Row exists. Get its ID:
                 let mut statement = conn.prepare_cached(
-                    "SELECT rowid FROM files WHERE basename = ?1 AND dir_id == ?2",
+                    "SELECT rowid, size FROM files WHERE basename = ?1 AND dir_id = ?2",
                 )?;
-                let row_id = RowId(
-                    statement.query_row(params![basename, directory_id.0], |row| row.get(0))?,
-                );
+                let (row_id, db_size) = statement
+                    .query_row(params![basename, directory_id.0], |row| {
+                        Ok((RowId(row.get(0)?), Size(row.get(1)?)))
+                    })?;
                 drop(statement);
 
-                // Update fields we know about and null the others, mostly to make debugging easier.
+                if options.remember_checksums {
+                    if size == db_size {
+                        trace!("Remembered saved checksum of row: {}", row_id);
+                        return Ok(row_id);
+                    } else {
+                        debug!(
+                            "Ignoring --remember-checksums because file has changed size. Id: {}",
+                            row_id
+                        );
+                    }
+                }
+
                 update_record(
                     conn,
                     row_id,
@@ -209,11 +221,8 @@ pub(crate) mod file_db {
         ))?;
 
         let rows = statement.query([options.min_size.0])?.map(|row| {
-            let row_id = RowId(row.get::<_, u64>(0)?);
-            let bytes = row.get::<_, Vec<u8>>(1)?;
-            let checksum: Result<Checksum> = bytes
-                .try_into()
-                .map_err(|_| anyhow!("{} has wrong byte length", column_name));
+            let row_id = RowId(row.get(0)?);
+            let checksum: Result<Checksum, rusqlite::Error> = row.get(1);
             completed_count.fetch_add(1, Relaxed);
             Ok((row_id, checksum))
         });
@@ -271,6 +280,7 @@ pub(crate) mod file_db {
     pub(crate) fn get_files<F>(
         conn: &Connection,
         file_rows: &Vec<RowId>,
+        get_checksums: bool,
         mut callback: F,
     ) -> Result<()>
     where
@@ -286,23 +296,36 @@ pub(crate) mod file_db {
         while let Some(ids) = iter.next() {
             let question_marks = n_question_marks(ids.len());
             let mut statement = conn.prepare_cached(&format!(
-                "SELECT files.rowid, \
-                            inode, size, deviceno, shortchecksum, checksum, \
-                            directory, basename \
+                "SELECT files.rowid \
+                            , inode, size, deviceno \
+                            , directory, basename \
+                            {} \
                             FROM files INNER JOIN directories ON files.dir_id = directories.rowid \
                             WHERE files.rowid IN ({})",
+                if get_checksums {
+                    ", shortchecksum, checksum"
+                } else {
+                    ""
+                },
                 question_marks
             ))?;
 
             let mut rows = statement.query(params_from_iter(ids.iter().map(|r| r.0)))?;
             while let Some(row) = rows.next()? {
+                let (short_checksum, checksum) = if get_checksums {
+                    (row.get(6)?, row.get(7)?)
+                } else {
+                    (None, None)
+                };
                 let file = FileData::new(
                     RowId(row.get(0)?),
-                    Some(row.get::<_, Directory>(6)?),
-                    Some(row.get::<_, Basename>(7)?),
+                    Some(row.get(4)?),
+                    Some(row.get(5)?),
                     Deviceno(row.get(3)?),
                     Inode(row.get(1)?),
                     Size(row.get(2)?),
+                    short_checksum,
+                    checksum,
                 );
                 callback(file);
                 count += 1;

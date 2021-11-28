@@ -14,6 +14,8 @@ pub(crate) struct FileData {
     pub deviceno: Deviceno,
     pub inode: Inode,
     pub size: Size,
+    pub short_checksum: Option<Checksum>,
+    pub checksum: Option<Checksum>,
 }
 
 impl FileData {
@@ -24,6 +26,8 @@ impl FileData {
         deviceno: Deviceno,
         inode: Inode,
         size: Size,
+        short_checksum: Option<Checksum>,
+        checksum: Option<Checksum>,
     ) -> FileData {
         FileData {
             row_id,
@@ -32,6 +36,8 @@ impl FileData {
             deviceno,
             inode,
             size,
+            short_checksum,
+            checksum,
         }
     }
 

@@ -37,6 +37,8 @@ use log::{debug, error, info, trace, warn};
 // A file is uniquely identified by its device/inode.
 type FileId = (Inode, Deviceno);
 
+const SHORT_CHUNK_SIZE: usize = 4096;
+
 /// This trait is an interface that takes a list of lists of potentially duplicate files--for
 /// example, if they have the same size but may not match in other ways--and returns a more refined
 /// list of lists of potentially duplicate files. For example, groups of files with the same size
@@ -220,6 +222,7 @@ impl ProcessMatches for GetFiles {
                             get_device_no_win(&md),
                         ),
                         size,
+                        options,
                     );
                     match row_id {
                         Ok(row_id) => row_ids.entry(size).or_default().push(row_id),
@@ -257,7 +260,7 @@ impl ProcessMatches for GroupByShortChecksum {
             "Stage 2",
             "short checksums",
             "shortchecksum",
-            4096,
+            SHORT_CHUNK_SIZE,
             candidate_groups,
             conn,
             options,
@@ -364,7 +367,7 @@ fn get_store_checksums(
         let loop_start_time = Instant::now();
 
         let mut need_checksums = Vec::new();
-        get_files(conn, &file_ids, |file| {
+        get_files(conn, &file_ids, options.remember_checksums, |file| {
             trace!("Added candidate file: {:?}", file);
             need_checksums.push(file);
         })?;
@@ -428,32 +431,52 @@ fn store_checksums(
             })
             .or_insert_with(|| {
                 // This is a new inode/device combination
-                trace!("Sending {} checksum job to a thread worker", file.row_id);
-                let path = file.path().unwrap();
-                let io_lock = Arc::clone(&io_lock);
-                let filesize = file.size;
-                let max_io = options.max_io_threads;
-                let options = Arc::clone(options);
-                pool.execute(move || {
-                    trace!("Starting job for file {:?}: {:?}", &path, pair);
-                    let result = compute_checksum(
-                        io_lock,
-                        max_io,
-                        available_memory,
-                        path,
-                        filesize,
-                        chunk_size,
-                        pair,
-                        options,
-                    );
+
+                let existing_checksum = if options.remember_checksums {
+                    if chunk_size == SHORT_CHUNK_SIZE {
+                        file.short_checksum
+                    } else {
+                        file.checksum
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(existing_checksum) = existing_checksum {
+                    // Because this file may share an inode with another, it should share the same logic flow.
+                    // It's just that the "calculate the checksum" procedure is a noop.
+                    trace!("Remembed checksum result: {}", file.row_id);
+                    let result = Ok(existing_checksum);
                     counter.fetch_add(1, Relaxed);
-                    tx.send((pair, result)).unwrap();
-                });
+                    tx.send((pair, result, Some(file.row_id))).unwrap();
+                } else {
+                    trace!("Sending checksum job to a thread worker: {}", file.row_id);
+                    let path = file.path().unwrap();
+                    let io_lock = Arc::clone(&io_lock);
+                    let filesize = file.size;
+                    let max_io = options.max_io_threads;
+                    let options = Arc::clone(options);
+                    pool.execute(move || {
+                        trace!("Starting job for file {:?}: {:?}", &path, pair);
+                        let result = compute_checksum(
+                            io_lock,
+                            max_io,
+                            available_memory,
+                            path,
+                            filesize,
+                            chunk_size,
+                            pair,
+                            options,
+                        );
+                        counter.fetch_add(1, Relaxed);
+                        tx.send((pair, result, None)).unwrap();
+                    });
+                }
+
+                // FIXME: won't this be a problem?
                 vec![file.row_id]
             });
     }
-
-    let files_in_queue = files_in_queue; // readonly now
 
     debug!("Now waiting for thread results");
 
@@ -466,28 +489,45 @@ fn store_checksums(
             transaction = Box::new(file_db::file_db::transaction(conn)?);
         }
         trace!("Receiving result {} of {}", n, files_in_queue.len());
-        let (pair, result) = rx.recv()?;
+        let (pair, result, cached_row_id) = rx.recv()?;
         trace!(
             "Got result {} of {} ({})",
             n,
             files_in_queue.len(),
             if result.is_ok() { "okay" } else { "error" }
         );
-        let result = match result {
+        let checksum = match result {
             Ok(result) => result,
             Err(_) => continue,
         };
 
-        let checksum = Checksum(result);
         trace!("Found checksum result {} for job {:?}", checksum, pair);
-        assert!(!files_in_queue.get(&pair).unwrap().is_empty()); // something should be waiting for this
+        let waiting_for_checksum = files_in_queue.get_mut(&pair).unwrap();
+        assert!(!waiting_for_checksum.is_empty()); // something should be waiting for this
+
+        for rowid in waiting_for_checksum.iter() {
+            checksum_data.insert(*rowid, checksum);
+        }
+        // Note: even if the record was already cached, we still have to go through
+        // this list to update any other records that share the same inode.
+        // But we can skip updating this one file.
+        if let Some(cached_row_id) = cached_row_id {
+            waiting_for_checksum.swap_remove(
+                waiting_for_checksum
+                    .iter()
+                    .position(|e| e == &cached_row_id)
+                    .unwrap(),
+            );
+        }
+        if waiting_for_checksum.is_empty() {
+            continue;
+        }
         trace!(
             "Updating {} records for inode {:?}",
-            files_in_queue.get(&pair).unwrap().len(),
+            waiting_for_checksum.len(),
             pair
         );
-        for rowid in files_in_queue.get(&pair).unwrap() {
-            checksum_data.insert(*rowid, checksum);
+        for rowid in waiting_for_checksum {
             update_record(
                 &transaction,
                 *rowid,
@@ -514,7 +554,7 @@ fn compute_checksum(
     chunk_size: usize,
     job_id: FileId,
     options: Arc<Options>,
-) -> Result<[u8; blake3::OUT_LEN], std::io::Error> {
+) -> Result<Checksum, std::io::Error> {
     let read_amount = if chunk_size == 0 {
         filesize.0
     } else {
@@ -577,10 +617,12 @@ fn compute_checksum(
             hasher.finalize()
         }
     };
-    trace!("Sending successful result for job {:?}", job_id);
-    Ok((*digest.as_bytes())
+    let bytes: [u8; blake3::OUT_LEN] = (*digest.as_bytes())
         .try_into()
-        .expect("checksum: wrong length (Infallible)"))
+        .expect("checksum: wrong length (Infallible)");
+    let checksum = Checksum(bytes);
+    trace!("Sending successful result for job {:?}", job_id);
+    Ok(checksum)
 }
 pub(crate) struct PrintMatches {}
 
@@ -629,7 +671,7 @@ impl PrintMatches {
             // Drop the fully hard-linked groups:
 
             let mut group = Vec::new();
-            get_files(conn, group_ids, |file| {
+            get_files(conn, group_ids, options.remember_checksums, |file| {
                 file_count.fetch_add(1, Relaxed);
 
                 // If not writing to JSON, it's more important that the stdout output be correct:

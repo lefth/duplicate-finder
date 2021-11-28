@@ -121,10 +121,10 @@ impl Serialize for DuplicateGroup {
 
 #[test]
 fn test_group_serialization() -> Result<()> {
-    use crate::types::blob_to_str;
+    use crate::types::bytes_to_str;
     use std::path::Path;
 
-    let bad_str = blob_to_str(b"fran\xe7ais")?; // latin1 on-disk path on a utf8 distro
+    let bad_str = bytes_to_str(b"fran\xe7ais")?; // latin1 on-disk path on a utf8 distro
     let duplicates = DuplicateGroup {
         duplicates: vec![vec![
             Path::new(&bad_str).join("file1"),
