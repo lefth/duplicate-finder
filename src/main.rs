@@ -1,10 +1,11 @@
 #![cfg_attr(windows, feature(windows_by_handle))]
 
 use std::fs;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use structopt::lazy_static::lazy_static;
 use structopt::StructOpt;
 
 mod file_db;
@@ -52,8 +53,11 @@ fn init(options: &Options) -> Result<()> {
     // when the new element is popped.
     let interrupt_handlers = Arc::clone(&options.interrupt_handlers);
     ctrlc::set_handler(move || {
-        static mut LAST_INTERRUPT: Option<Instant> = None;
-        let prev_interrupt_time = unsafe { LAST_INTERRUPT.replace(Instant::now()) };
+        lazy_static! {
+            static ref LAST_INTERRUPT: Mutex<Option<Instant>> = Mutex::new(None);
+        }
+        let mut last_interrupt = LAST_INTERRUPT.lock().unwrap();
+        let prev_interrupt_time = last_interrupt.replace(Instant::now());
         match prev_interrupt_time.map(|instant| instant.elapsed()) {
             Some(elapsed) if elapsed.as_millis() < 1500 => {
                 std::process::exit(1);
