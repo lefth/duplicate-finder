@@ -53,23 +53,29 @@ fn init(options: &Options) -> Result<()> {
     // when the new element is popped.
     let interrupt_handlers = Arc::clone(&options.interrupt_handlers);
     ctrlc::set_handler(move || {
+        // Get the time since last interrupt:
         lazy_static! {
             static ref LAST_INTERRUPT: Mutex<Option<Instant>> = Mutex::new(None);
         }
         let mut last_interrupt = LAST_INTERRUPT.lock().unwrap();
         let prev_interrupt_time = last_interrupt.replace(Instant::now());
-        match prev_interrupt_time.map(|instant| instant.elapsed()) {
-            Some(elapsed) if elapsed.as_millis() < 1500 => {
+
+        // Exit if needed
+        match prev_interrupt_time {
+            Some(prev_interrupt_time) if prev_interrupt_time.elapsed().as_millis() < 1500 => {
                 std::process::exit(1);
             }
-            _ => eprintln!("\nInterrupt caught. Quickly press ctrl-c again to exit."),
+            _ => {}
         }
 
+        // Call the temporary additional interrupt handler logic:
         let lock = interrupt_handlers.lock().unwrap();
         let last_handler = lock.last();
         if let Some(handler) = last_handler {
             handler();
         }
+
+        eprintln!("\nInterrupt caught. Quickly press ctrl-c again to exit.");
     })
     .context("Error setting Ctrl-C handler")
 }
