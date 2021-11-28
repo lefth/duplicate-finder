@@ -134,6 +134,7 @@ pub(crate) struct Options {
 impl Options {
     /// Set the interrupt handler, and restore the previous one at the end of the scope.
     /// This temporary handler will still exit if there are two interrupts sent in a short time.
+    #[must_use = "Must keep the guard or the interrupt handler will immediately be popped."]
     pub fn push_interrupt_handler<F: 'static + Fn() + Send>(&self, handler: F) -> HandlerGuard {
         let mut handlers = self.interrupt_handlers.lock().unwrap();
         handlers.push(Box::new(handler));

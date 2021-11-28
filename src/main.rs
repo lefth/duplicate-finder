@@ -78,7 +78,7 @@ fn main() -> Result<()> {
 
     let mut conn = init_connection(&mut options)?;
 
-    options.push_interrupt_handler(|| eprintln!("\nFinding all files"));
+    let _handler_guard = options.push_interrupt_handler(|| eprintln!("\nFinding all files"));
 
     let options = Arc::new(options);
     let final_matches = if options.resume_stage4 {
