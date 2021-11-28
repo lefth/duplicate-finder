@@ -1,26 +1,29 @@
 #![cfg_attr(windows, feature(windows_by_handle))]
 
 use std::fs;
-use std::sync::{Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use crossbeam_utils::thread;
 use structopt::lazy_static::lazy_static;
 use structopt::StructOpt;
 
-mod file_db;
-use crate::{
-    file_db::file_db::init_connection,
-    process_matches::{GetFiles, GroupByFullChecksum, GroupByShortChecksum, PrintMatches},
-};
-mod process_matches;
-use crate::process_matches::ProcessMatches;
-mod file_data;
-mod types;
-use types::*;
-
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn, LevelFilter};
+
+mod consolidation;
+mod file_data;
+mod file_db;
+mod process_matches;
+mod types;
+use crate::{
+    consolidation::*,
+    file_db::file_db::init_connection,
+    process_matches::ProcessMatches,
+    process_matches::{GetFiles, GroupByFullChecksum, GroupByShortChecksum, PrintMatches},
+    types::*,
+};
 
 type JobId = (Inode, Deviceno);
 
@@ -88,8 +91,6 @@ fn main() -> Result<()> {
 
     let mut conn = init_connection(&mut options)?;
 
-    let _handler_guard = options.push_interrupt_handler(|| eprintln!("\nFinding all files"));
-
     let options = Arc::new(options);
     let final_matches = if options.resume_stage4 {
         file_db::file_db::get_matching_checksums(&conn, "checksum", &options)?
@@ -97,6 +98,8 @@ fn main() -> Result<()> {
         let candidate_groups = if options.resume_stage3 {
             file_db::file_db::get_matching_checksums(&conn, "shortchecksum", &options)?
         } else {
+            let _handler_guard =
+                options.push_interrupt_handler(|| eprintln!("\nFinding all files"));
             let candidate_groups = GetFiles::process_matches(None, &mut conn, &options)?;
 
             let candidate_groups =
@@ -109,11 +112,27 @@ fn main() -> Result<()> {
         final_matches
     };
 
-    PrintMatches::process_matches(Some(final_matches), &mut conn, &options)?;
+    // Because all the filenames might not fit in memory, we have to process them with a channel
+    // as they are generated:
+    thread::scope(|s| -> Result<()> {
+        let (tx, rx) = mpsc::sync_channel(100);
+        let handle = s.spawn(|_| -> Result<()> {
+            PrintMatches::process_matches(Some(final_matches), &mut conn, &options, tx)?;
 
-    conn.close().map_err(|err| err.1)?;
-    if !options.keep_db_file && options.db_file != ":memory:" {
-        fs::remove_file(&options.db_file)?;
-    }
+            conn.close().map_err(|err| err.1)?;
+            if !options.keep_db_file && options.db_file != ":memory:" {
+                fs::remove_file(&options.db_file)?;
+            }
+            Ok(())
+        });
+
+        if options.consolidate {
+            consolidate_groups(rx, &options)?;
+        }
+        handle.join().unwrap()?;
+        Ok(())
+    })
+    .unwrap()?;
+
     Ok(())
 }

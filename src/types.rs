@@ -47,7 +47,7 @@ pub(crate) struct Options {
 
     #[structopt(long)]
     /// Resume a previous operation at stage 4: this prints results based on checksums that
-    /// have already been computed. Useful for changing the output format.
+    /// have already been computed, and consolidates the duplicates if requested.
     /// Implies --no-truncate-db
     pub resume_stage4: bool,
 
@@ -86,6 +86,15 @@ pub(crate) struct Options {
     #[structopt(short = "j", long = "write_json")]
     /// Save output to a file as JSON
     pub save_json_filename: Option<OsString>,
+
+    /// Attempt to hard link duplicate files to reclaim space. This is a testing feature
+    /// and you should back up your files before using it.
+    #[structopt(long)]
+    pub consolidate: bool,
+
+    /// Don't consolidate files, but print what would be done.
+    #[structopt(long, short = "n")]
+    pub dry_run: bool,
 
     #[structopt(short, long)]
     /// Don't delete the sqlite file. For debugging
@@ -145,6 +154,14 @@ impl Options {
         if self.resume_stage3 || self.resume_stage4 {
             self.no_truncate_db = true;
             self.db_must_exist = true;
+        }
+
+        if self.dry_run {
+            if self.consolidate {
+                info!("--dry-run requested, consolidation will not change files.");
+            } else {
+                warn!("--dry-run being ignored, since consolidation was not requested.");
+            }
         }
 
         // TODO: Tune these parameters. We don't want to run out of memory.

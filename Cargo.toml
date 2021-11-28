@@ -21,6 +21,8 @@ bytesize = "1.0.0"
 memmap = "0.7.0"
 anyhow = "1.0.44"
 fallible-iterator = "0.2.0"
+uuid = { version = "0.8.2", features = ["v4"] }
+crossbeam-utils = "0.8.5"
 
 [dependencies.rusqlite]
 version = "0.25.3"

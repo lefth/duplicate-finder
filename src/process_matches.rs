@@ -3,16 +3,13 @@ use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
     fs::{self, symlink_metadata, File},
-    io::{BufWriter, Read, Write},
-    sync::{
-        atomic::{AtomicU32, AtomicU64, Ordering::*},
-        mpsc::channel,
-    },
-};
-
-use std::{
+    io::{BufWriter, Read},
     path::PathBuf,
-    sync::{atomic::AtomicI32, Arc},
+    sync::{
+        atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering::*},
+        mpsc::{self, channel},
+        Arc,
+    },
     time::Instant,
 };
 
@@ -22,6 +19,7 @@ use log::LevelFilter;
 use memmap::Mmap;
 use multi_semaphore::Semaphore;
 use rusqlite::{params, Connection};
+use serde::{ser::SerializeSeq, Serializer};
 use threadpool::ThreadPool;
 
 use crate::{
@@ -586,77 +584,111 @@ fn compute_checksum(
 }
 pub(crate) struct PrintMatches {}
 
-impl ProcessMatches for PrintMatches {
-    fn process_matches_(
-        candidate_groups: Option<Vec<Vec<RowId>>>,
+// impl ProcessMatches for PrintMatches {
+// this is NOT ProcessMatches because the return type is different.
+impl PrintMatches {
+    pub(crate) fn process_matches(
+        groups: Option<Vec<Vec<RowId>>>, // not candidate_groups--these should be the final matches
         conn: &mut Connection,
         options: &Arc<Options>,
-    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
-        assert!(candidate_groups.is_some());
-        let candidate_groups =
-            candidate_groups.expect("PrintMatches needs to be given an existing list");
+        tx: mpsc::SyncSender<DuplicateGroup>,
+    ) -> Result<()> {
+        debug!("Processing matches for printing or consolidation.");
+        assert!(groups.is_some());
+        let groups = groups.expect("PrintMatches needs to be given an existing list");
 
-        let mut file_count = 0;
+        let file_count = Arc::new(AtomicU64::new(0));
 
-        let mut processed_groups = Vec::new();
         let mut redundant_bytes = 0;
-        for group_ids in candidate_groups.iter() {
+
+        let _handler_guard = {
+            let start_time = Instant::now();
+            let file_count = Arc::clone(&file_count);
+            options.push_interrupt_handler(move || {
+                eprintln!(
+                    "\nRead {} files from DB. Elapsed: {:?}",
+                    file_count.load(Relaxed),
+                    start_time.elapsed()
+                )
+            })
+        };
+
+        let mut ser;
+        let mut seq = if let Some(ref save_json_filename) = options.save_json_filename {
+            debug!("Writing JSON: {:?}", save_json_filename);
+            let file = File::create(save_json_filename)?;
+            let writer = BufWriter::new(file);
+            ser = serde_json::Serializer::new(writer);
+            let seq = ser.serialize_seq(None)?;
+            Some(seq)
+        } else {
+            None
+        };
+
+        let mut warned_newlines = false;
+
+        for group_ids in groups.iter() {
+            // TODO: skip groups with length==1.
+            // Drop the fully hard-linked groups:
+
             let mut group = Vec::new();
             get_files(conn, group_ids, |file| {
-                file_count += 1;
+                file_count.fetch_add(1, Relaxed);
+
+                // If not writing to JSON, it's more important that the stdout output be correct:
+                if !warned_newlines
+                    && !seq.is_some()
+                    && file.path().unwrap().to_string_lossy().contains("\n")
+                {
+                    warn!(
+                        "One of the duplicate filenames contains a newline. Try --write-json \
+                        for parsable output"
+                    );
+                    warned_newlines = true;
+                }
+
                 group.push(file);
             })?;
 
+            if group.len() <= 1 {
+                continue; // skip invalid groups--can't be a duplicate
+            }
+
             if let Some(group) = DuplicateGroup::new(group, options)? {
                 redundant_bytes += group.redundant_bytes;
-                processed_groups.push(group);
-            }
-        }
-
-        if let Some(json_filename) = options.save_json_filename.as_ref() {
-            let file = File::create(json_filename)?;
-            let mut writer = BufWriter::new(file);
-            serde_json::to_writer_pretty(&mut writer, &processed_groups)?;
-            writer.flush()?;
-        } else {
-            // If not writing to JSON, it's more important that the stdout output be correct:
-            for group in &processed_groups {
-                for filename in group.duplicates.iter().flatten() {
-                    if filename.to_string_lossy().contains("\n") {
-                        warn!(
-                            "One of the duplicate filenames contains a newline. Try --write-json \
-                            for parsable output"
-                        );
-                        break;
-                    }
-                }
-            }
-        }
-
-        if log::max_level() != LevelFilter::Off {
-            for group in &processed_groups {
-                // Display this group of duplicate files:
-                for hardlinked_subgroup in &group.duplicates {
-                    if hardlinked_subgroup.len() > 1 {
-                        println!("Hard linked duplicates:");
-                        for filename in hardlinked_subgroup {
-                            println!("\t{:?}", filename);
-                        }
-                    } else {
-                        for filename in hardlinked_subgroup {
-                            println!("{:?}", filename);
-                        }
-                    }
+                if let Some(ref mut seq) = seq {
+                    seq.serialize_element(&group)?;
                 }
 
-                println!("");
+                if log::max_level() != LevelFilter::Off {
+                    // Display this group of duplicate files:
+                    for hardlinked_subgroup in &group.duplicates {
+                        if hardlinked_subgroup.len() > 1 {
+                            info!("Hard linked duplicates:");
+                            for filename in hardlinked_subgroup {
+                                info!("\t{:?}", filename);
+                            }
+                        } else {
+                            for filename in hardlinked_subgroup {
+                                info!("{:?}", filename);
+                            }
+                        }
+                    }
+
+                    info!(""); // print a newline
+                }
+
+                tx.send(group)?;
             }
         }
 
-        debug!("Note: got {} files.", file_count);
+        if let Some(seq) = seq {
+            seq.end()?;
+        }
+
+        debug!("Note: got {} files.", file_count.load(Relaxed));
         info!("{} can be reclaimed", ByteSize::b(redundant_bytes));
 
-        // Data is no longer needed
-        Ok(Box::new(Vec::new().into_iter()))
+        Ok(())
     }
 }

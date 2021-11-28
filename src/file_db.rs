@@ -1,5 +1,15 @@
 pub(crate) mod file_db {
-    use std::{cell::RefCell, collections::HashMap, convert::TryInto, path::PathBuf};
+    use std::{
+        cell::RefCell,
+        collections::HashMap,
+        convert::TryInto,
+        path::PathBuf,
+        sync::{
+            atomic::{AtomicU64, Ordering::Relaxed},
+            Arc,
+        },
+        time::Instant,
+    };
 
     use anyhow::{anyhow, Result};
     use fallible_iterator::FallibleIterator;
@@ -167,7 +177,30 @@ pub(crate) mod file_db {
         column_name: &str,
         options: &Options,
     ) -> Result<Vec<Vec<RowId>>> {
-        trace!("Getting row IDs that have checksums matching other rows.");
+        debug!("Reading checksums from DB.");
+
+        let total_count = conn.query_row(
+            &format!(
+                "SELECT COUNT() FROM files
+                WHERE {} IS NOT NULL AND size > ?",
+                column_name
+            ),
+            [options.min_size.0],
+            |row| row.get::<_, u64>(0),
+        )?;
+        let completed_count = Arc::new(AtomicU64::new(0));
+        let _handler_guard = {
+            let start_time = Instant::now();
+            let completed_count = Arc::clone(&completed_count);
+            options.push_interrupt_handler(move || {
+                eprintln!(
+                    "\nRead {}/{} checksums from DB. Elapsed: {:?}",
+                    completed_count.load(Relaxed),
+                    total_count,
+                    start_time.elapsed()
+                )
+            })
+        };
         let mut statement = conn.prepare(&format!(
             "SELECT rowid, {} FROM files
                 WHERE {} IS NOT NULL AND size > ?
@@ -181,8 +214,20 @@ pub(crate) mod file_db {
             let checksum: Result<Checksum> = bytes
                 .try_into()
                 .map_err(|_| anyhow!("{} has wrong byte length", column_name));
+            completed_count.fetch_add(1, Relaxed);
             Ok((row_id, checksum))
         });
+
+        debug!("Grouping matching checksums from DB.");
+        let _handler_guard = {
+            let start_time = Instant::now();
+            options.push_interrupt_handler(move || {
+                eprintln!(
+                    "\nGrouping matching checksums from DB. Elapsed: {:?}",
+                    start_time.elapsed()
+                )
+            })
+        };
 
         let mut curr_checksum = None;
         let groups = rows.fold(vec![], |mut accum: Vec<Vec<RowId>>, (row_id, checksum)| {
@@ -267,8 +312,7 @@ pub(crate) mod file_db {
 
         // If files failed to be read, we won't be able to get a row with the needed data.
         // This error is useful for testing, but in the real world, file reads do fail:
-        //if cfg!(debug_assertions) {
-        debug_assert!(count == file_rows.len());
+        debug_assert_eq!(count, file_rows.len()); // XXX
 
         Ok(())
     }
