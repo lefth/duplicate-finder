@@ -362,7 +362,7 @@ impl TryFrom<Vec<u8>> for Checksum {
 /// But duplicates[0] and duplicates[1] are not hard links with each other.
 #[derive(Serialize)]
 pub(crate) struct DuplicateGroup {
-    pub duplicates: Vec<Vec<String>>,
+    pub duplicates: Vec<Vec<PathBuf>>,
 
     pub redundant_bytes: u64,
 }
@@ -383,12 +383,12 @@ impl DuplicateGroup {
         }
 
         // Group filenames by hardlinked files, so the user can see what needs to be consolidated
-        let mut hardlinked_subgroups = HashMap::<FileId, Vec<String>>::new();
+        let mut hardlinked_subgroups = HashMap::<FileId, Vec<PathBuf>>::new();
         for file in match_group.iter() {
             let hardlinked_subgroup = hardlinked_subgroups
                 .entry((file.inode, file.deviceno))
                 .or_default();
-            hardlinked_subgroup.push(file.path_str()?);
+            hardlinked_subgroup.push(file.path()?);
         }
 
         let file_size = match_group.first().unwrap().size.0;

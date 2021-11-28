@@ -47,18 +47,5 @@ pub mod file_data {
 
             Ok(dir.join(basename))
         }
-
-        /// Get the path as a string: dir/basename.
-        /// If the path isn't a valid UTF-8 string, warn and proceed anyway.
-        pub fn path_str(&self) -> Result<String> {
-            let path = self.path()?;
-            Ok(path.to_str().map(|str| str.to_owned()).unwrap_or_else(|| {
-                warn!(
-                    "Output path is not fully representable as utf-8: {:#?}",
-                    &path
-                );
-                path.display().to_string()
-            }))
-        }
     }
 }

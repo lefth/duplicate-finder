@@ -622,7 +622,7 @@ impl ProcessMatches for PrintMatches {
             // If not writing to JSON, it's more important that the stdout output be correct:
             for group in &processed_groups {
                 for filename in group.duplicates.iter().flatten() {
-                    if filename.contains("\n") {
+                    if filename.to_string_lossy().contains("\n") {
                         warn!(
                             "One of the duplicate filenames contains a newline. Try --write-json \
                             for parsable output"
@@ -640,11 +640,11 @@ impl ProcessMatches for PrintMatches {
                     if hardlinked_subgroup.len() > 1 {
                         println!("Hard linked duplicates:");
                         for filename in hardlinked_subgroup {
-                            println!("\t{}", filename);
+                            println!("\t{:?}", filename);
                         }
                     } else {
                         for filename in hardlinked_subgroup {
-                            println!("{}", filename);
+                            println!("{:?}", filename);
                         }
                     }
                 }
