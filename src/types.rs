@@ -456,42 +456,43 @@ fn from_sql_column_result(
     }
 }
 
-#[cfg(windows)]
-/// Interpret a byte string as a possibly invalid UTF-16 string.
+/// Interpret a byte string as a possibly invalid UTF-8 path,
+/// or as a possibly invalid UTF-16 string on Windows
 fn blob_to_str(blob: &[u8]) -> Result<OsString> {
-    if blob.len() % 2 == 1 {
-        anyhow!(
-            "Blob can't be parsed to filename: uneven byte length: {:?}",
-            blob
-        );
+    #[cfg(unix)]
+    {
+        Ok(OsString::from_vec(blob.to_vec()))
     }
-    let wide: Vec<u16> = blob.chunks(2).map(combine_bytes).collect();
-    Ok(OsString::from_wide(&wide))
+    #[cfg(windows)]
+    {
+        if blob.len() % 2 == 1 {
+            anyhow!(
+                "Blob can't be parsed to filename: uneven byte length: {:?}",
+                blob
+            );
+        }
+        let wide: Vec<u16> = blob.chunks(2).map(combine_bytes).collect();
+        Ok(OsString::from_wide(&wide))
+    }
 }
 
-#[cfg(unix)]
-/// Interpret a byte string as a possibly invalid UTF-8 path.
-fn blob_to_str(blob: &[u8]) -> Result<OsString> {
-    Ok(OsString::from_vec(blob.to_vec()))
-}
-
-#[cfg(windows)]
 /// Convert a filename str to bytes.
 fn str_to_blob(s: &OsStr) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for item_u16 in s.encode_wide() {
-        let (a, b) = split_bytes(item_u16);
-        bytes.push(a);
-        bytes.push(b);
+    #[cfg(unix)]
+    {
+        let bytes = s.as_bytes();
+        bytes.to_vec()
     }
-    bytes
-}
-
-#[cfg(unix)]
-/// Convert a filename str to bytes.
-fn str_to_blob(s: &OsStr) -> Vec<u8> {
-    let bytes = s.as_bytes();
-    bytes.to_vec()
+    #[cfg(windows)]
+    {
+        let mut bytes = Vec::new();
+        for item_u16 in s.encode_wide() {
+            let (a, b) = split_bytes(item_u16);
+            bytes.push(a);
+            bytes.push(b);
+        }
+        bytes
+    }
 }
 
 #[cfg_attr(unix, allow(dead_code))] // only needed for windows

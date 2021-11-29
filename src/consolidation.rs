@@ -117,13 +117,14 @@ fn has_not_found_links(duplicate_group: &[PathBuf]) -> Result<bool> {
     let nlinks = number_of_links(&md).context("Couldn't get hard links from metadata")?;
     if nlinks < duplicate_group.len() as u64 {
         bail!(
-            "Group has {} members but there are only {} linked files on this inode.",
+            "Group has {} members but there are only {} linked files on this inode. (group has been broken up)",
             duplicate_group.len(),
             nlinks
         );
     }
 
-    Ok(nlinks != duplicate_group.len() as u64)
+    let extra_links = nlinks > duplicate_group.len() as u64;
+    Ok(extra_links)
 }
 
 pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup) {
@@ -144,17 +145,15 @@ pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup) {
                 );
                 warn_path_list(elem);
                 duplicate_group.duplicates.remove(i);
-                if let Some(largest_idx) = largest_idx.as_mut() {
-                    *largest_idx = *largest_idx - 1;
-                }
-                if let Some(idx_with_other_links) = idx_with_other_links.as_mut() {
-                    *idx_with_other_links = *idx_with_other_links - 1;
-                }
+
+                // We removed a group, so decrement the stored (higher) indices:
+                largest_idx.as_mut().map(|n| *n = *n - 1);
+                idx_with_other_links.as_mut().map(|n| *n = *n - 1);
                 continue;
             }
         };
         if has_not_found_links {
-            if let Some(idx_with_other_links) = idx_with_other_links.as_mut() {
+            if idx_with_other_links.is_some() {
                 // We can't reclaim all the space. This should be handled manually.
                 // (One group with extra links would be okay--we could preserve those
                 // files but re-link the other groups.)
@@ -162,11 +161,10 @@ pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup) {
                 warn_path_list(elem);
 
                 duplicate_group.duplicates.remove(i);
-                // we removed an element, so we must decrement the indices we are keeping:
-                if let Some(largest_idx) = largest_idx.as_mut() {
-                    *largest_idx = *largest_idx - 1;
-                }
-                *idx_with_other_links = *idx_with_other_links - 1;
+
+                // We removed a group, so decrement the stored (higher) indices:
+                largest_idx.as_mut().map(|n| *n = *n - 1);
+                idx_with_other_links.as_mut().map(|n| *n = *n - 1);
                 continue;
             } else {
                 idx_with_other_links = Some(i);
@@ -177,6 +175,7 @@ pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup) {
         }
     }
 
+    // The group to preserve will be whichever group is first, so put the keeper first:
     if let Some(idx_with_other_links) = idx_with_other_links {
         duplicate_group.duplicates.swap(0, idx_with_other_links);
     } else if let Some(largest_idx) = largest_idx {
@@ -184,6 +183,7 @@ pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup) {
     }
 }
 
+/// See also print_path_list().
 fn warn_path_list(paths: &[PathBuf]) {
     for path in paths {
         if let Some(path) = path.to_str() {
@@ -194,6 +194,7 @@ fn warn_path_list(paths: &[PathBuf]) {
     }
 }
 
+/// Get the number of files that are detected as being linked together.
 fn number_of_links(md: &Metadata) -> Option<u64> {
     #[cfg(unix)]
     return Some(md.nlink());

@@ -584,8 +584,7 @@ fn compute_checksum(
 }
 pub(crate) struct PrintMatches {}
 
-// impl ProcessMatches for PrintMatches {
-// this is NOT ProcessMatches because the return type is different.
+// This does NOT implement ProcessMatches because the return type is different.
 impl PrintMatches {
     pub(crate) fn process_matches(
         groups: Option<Vec<Vec<RowId>>>, // not candidate_groups--these should be the final matches
@@ -618,7 +617,7 @@ impl PrintMatches {
             debug!("Writing JSON: {:?}", save_json_filename);
             let file = File::create(save_json_filename)?;
             let writer = BufWriter::new(file);
-            ser = serde_json::Serializer::new(writer);
+            ser = serde_json::Serializer::pretty(writer);
             let seq = ser.serialize_seq(None)?;
             Some(seq)
         } else {
@@ -665,13 +664,9 @@ impl PrintMatches {
                     for hardlinked_subgroup in &group.duplicates {
                         if hardlinked_subgroup.len() > 1 {
                             info!("Hard linked duplicates:");
-                            for filename in hardlinked_subgroup {
-                                info!("\t{:?}", filename);
-                            }
+                            print_path_list(hardlinked_subgroup, "\t- ");
                         } else {
-                            for filename in hardlinked_subgroup {
-                                info!("{:?}", filename);
-                            }
+                            print_path_list(hardlinked_subgroup, "- ");
                         }
                     }
 
@@ -690,5 +685,16 @@ impl PrintMatches {
         info!("{} can be reclaimed", ByteSize::b(redundant_bytes));
 
         Ok(())
+    }
+}
+
+/// See also warn_path_list().
+fn print_path_list(paths: &[PathBuf], prefix: &str) {
+    for path in paths {
+        if let Some(path) = path.to_str() {
+            info!("{}{}", prefix, path);
+        } else {
+            info!("{}{:?}", prefix, path);
+        }
     }
 }
