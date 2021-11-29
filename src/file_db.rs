@@ -170,7 +170,7 @@ pub(crate) mod file_db {
     ) -> Result<Vec<Vec<RowId>>> {
         trace!("Getting row IDs that have checksums matching other rows.");
         let mut statement = conn.prepare(&format!(
-            "SELECT rowid, {} FROM file
+            "SELECT rowid, {} FROM files
                 WHERE {} IS NOT NULL AND size > ?
                 ORDER BY {}",
             column_name, column_name, column_name,
