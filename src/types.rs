@@ -367,10 +367,7 @@ pub(crate) struct DuplicateGroup {
 }
 
 impl DuplicateGroup {
-    pub fn new(
-        match_group: Vec<FileData>,
-        options: &Arc<Options>,
-    ) -> Result<Option<DuplicateGroup>> {
+    pub fn new(match_group: Vec<FileData>, options: &Options) -> Result<Option<DuplicateGroup>> {
         type FileId = (Inode, Deviceno);
 
         assert!(match_group.len() > 1);

@@ -1,5 +1,5 @@
 pub(crate) mod file_db {
-    use std::{cell::RefCell, collections::HashMap, convert::TryInto, path::PathBuf, sync::Arc};
+    use std::{cell::RefCell, collections::HashMap, convert::TryInto, path::PathBuf};
 
     use anyhow::{anyhow, Result};
     use fallible_iterator::FallibleIterator;
@@ -166,7 +166,7 @@ pub(crate) mod file_db {
     pub(crate) fn get_matching_checksums(
         conn: &Connection,
         column_name: &str,
-        options: &Arc<Options>,
+        options: &Options,
     ) -> Result<Vec<Vec<RowId>>> {
         trace!("Getting row IDs that have checksums matching other rows.");
         let mut statement = conn.prepare(&format!(
