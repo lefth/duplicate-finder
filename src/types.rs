@@ -16,6 +16,9 @@ use std::os::unix::prelude::{OsStrExt, OsStringExt};
 #[cfg(windows)]
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
+#[cfg(windows)]
+use anyhow::bail;
+
 use anyhow::Result;
 use rusqlite::{
     types::{FromSql, FromSqlError, ToSqlOutput, Value, ValueRef},
@@ -466,7 +469,7 @@ fn blob_to_str(blob: &[u8]) -> Result<OsString> {
     #[cfg(windows)]
     {
         if blob.len() % 2 == 1 {
-            anyhow!(
+            bail!(
                 "Blob can't be parsed to filename: uneven byte length: {:?}",
                 blob
             );
@@ -511,4 +514,32 @@ fn split_bytes(n: u16) -> (u8, u8) {
 fn test_u8_u16_conversion() {
     assert_eq!(combine_bytes(&[0x12, 0xAB]), 0x12AB_u16);
     assert_eq!(split_bytes(0x12AB_u16), (0x12, 0xAB));
+}
+
+#[test]
+fn test_fname_conversion() -> Result<()> {
+    // These are all valid UTF-8 of course:
+    for s in ["hello", "", "✔️ ❤️ ☆"] {
+        let s = OsString::from_str(s).unwrap(); // Err is Infallible
+        assert_eq!(&s, &blob_to_str(&str_to_blob(&s))?);
+    }
+
+    // This is an invalid utf-8 string:
+    let b = vec![0x66, 0x6f, 0x80, 0x6f];
+    assert_eq!(b, str_to_blob(&blob_to_str(&b)?));
+
+    #[cfg(windows)]
+    {
+        // invalid byte length
+        let source = b"x";
+        let s = blob_to_str(source);
+        assert!(s.is_err());
+
+        // invalid UTF-16 from rust OsString documentation
+        let source = [0x0066, 0x006f, 0xD800, 0x006f];
+        let s = OsString::from_wide(&source[..]);
+        assert_eq!(&s, &blob_to_str(&str_to_blob(&s))?);
+    }
+
+    Ok(())
 }
