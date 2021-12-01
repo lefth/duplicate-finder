@@ -1,6 +1,6 @@
 # duplicates
 
-[![Build Status](https://travis-ci.com/lefth/duplicates.svg?branch=master)](https://travis-ci.com/lefth/duplicates)
+[![Build Status](https://app.travis-ci.com/lefth/duplicate-finder.svg?branch=master)](https://app.travis-ci.com/lefth/duplicate-finder)
 
 A duplicate finder that works well on large and slow hard disks.
 
