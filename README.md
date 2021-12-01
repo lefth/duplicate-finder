@@ -16,18 +16,38 @@ Warning: this is alpha-level software. It has not had a lot of real world testin
 
 #### FLAGS:
 ```
-    -h, --help                     Prints help information
-    -k, --keep-db-file             Don't delete the sqlite file. For debugging
-        --mmap                     Use mmap. This increases performance of reading large files on SSDs, but
-                                   decreases performance on spinning drives. There is also a possibility of
-                                   crashes when files are modified during reading.
-        --no-truncate-db           Keep the database file from the previous run
-    -j, --print-json               Print output as JSON
-    -q, --quiet                    Reduces level of verbosity
-    -f, --show-fully-hardlinked    Show duplicates that are already fully hardlinked (so no further space
-                                   savings are possible)
-    -V, --version                  Prints version information
-    -v, --verbose                  Increases level of verbosity
+FLAGS:
+        --allow-incomplete-consolidation    Continue consolidation even if there are other linked files
+                                            that were not detected. This means space will not be saved
+                                            in some cases, but that's a necessity if running with a backup
+                                            copy (the backup copy normally being created with hard links)
+        --consolidate                       Attempt to hard link duplicate files to reclaim space. This is
+                                            a testing feature and you should back up your files before
+                                            using it
+    -n, --dry-run                           Don't consolidate files, but print what would be done
+    -h, --help                              Prints help information
+    -k, --keep-db-file                      Don't delete the sqlite file. For debugging
+        --mmap                              Use mmap. This increases performance of reading large files
+                                            on SSDs, but decreases performance on spinning drives. There
+                                            is also a possibility of crashes when files are modified
+                                            during reading
+        --no-truncate-db                    Keep the database file from the previous run
+    -q, --quiet                             Reduces level of verbosity. `-qqq` will suppress printing
+                                            duplicate files
+                                            The computation will still happen, and JSON may still be saved
+        --resume-stage3                     Resume a previous operation at stage 3: this computes any
+                                            necessary full checksums, based on candidates (with matching
+                                            short checksums) in an existing database file. Implies
+                                            --no-truncate-db
+        --resume-stage4                     Resume a previous operation at stage 4: this prints results
+                                            based on checksums that have already been computed, and
+                                            consolidates the duplicates if requested. Implies
+                                            --no-truncate-db
+    -f, --show-fully-hardlinked             Show duplicates that are already fully hardlinked (so no
+                                            further space savings are possible)
+    -V, --version                           Prints version information
+    -v, --verbose                           Increases level of verbosity
+
 ```
 
 #### OPTIONS:
