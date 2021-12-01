@@ -113,6 +113,9 @@ fn main() -> Result<()> {
         final_matches
     };
 
+    // Get user confirmation before we show a bunch of output, since the output will hide the prompt:
+    let user_confirmed_consolidation = options.consolidate && user_confirmation(&options);
+
     // Because all the filenames might not fit in memory, we have to process them with a channel
     // as they are generated:
     thread::scope(|s| -> Result<()> {
@@ -127,7 +130,7 @@ fn main() -> Result<()> {
             Ok(())
         });
 
-        if options.consolidate {
+        if options.consolidate && user_confirmed_consolidation {
             consolidate_groups(rx, &options)?;
         } else {
             // drain the receiver so the sender doesn't block

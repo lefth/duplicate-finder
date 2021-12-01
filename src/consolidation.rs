@@ -23,11 +23,8 @@ use uuid::Uuid;
 use crate::duplicate_group::DuplicateGroup;
 use crate::types::Options;
 
-pub(crate) fn consolidate_groups(
-    rx_duplicates: mpsc::Receiver<DuplicateGroup>,
-    options: &Options,
-) -> Result<()> {
-    if !options.dry_run {
+pub(crate) fn user_confirmation(options: &Options) -> bool {
+    options.dry_run || {
         eprintln!(
             "\nAutomatically hard linking files is a feature in testing and is not recommended \
             unless you have made a backup. Proceed anyway? [y/N]"
@@ -37,10 +34,14 @@ pub(crate) fn consolidate_groups(
         let _handler_guard = options.push_interrupt_handler(|| std::process::exit(1));
 
         let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
-        if !input_line.to_lowercase().starts_with("y") {
-            bail!("Operation cancelled");
-        }
+        input_line.to_lowercase().starts_with("y")
     }
+}
+
+pub(crate) fn consolidate_groups(
+    rx_duplicates: mpsc::Receiver<DuplicateGroup>,
+    options: &Options,
+) -> Result<()> {
     info!("Will overwrite non-linked files with hard links.");
 
     let start_time = Instant::now();
