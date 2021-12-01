@@ -129,6 +129,9 @@ fn main() -> Result<()> {
 
         if options.consolidate {
             consolidate_groups(rx, &options)?;
+        } else {
+            // drain the receiver so the sender doesn't block
+            for _ in rx {}
         }
         handle.join().unwrap()?;
         Ok(())

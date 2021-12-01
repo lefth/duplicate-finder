@@ -170,7 +170,6 @@ pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup, opt
                 // We removed a group, so decrement the stored (higher) indices:
                 largest_idx.as_mut().map(|n| *n = *n - 1);
                 idx_with_other_links.as_mut().map(|n| *n = *n - 1);
-                continue;
             } else {
                 idx_with_other_links = Some(i);
             }
