@@ -7,7 +7,7 @@ use serde::{
 };
 
 use crate::{
-    file_data::file_data::FileData,
+    file_data::FileData,
     types::{Deviceno, Inode, Options},
 };
 

@@ -24,7 +24,7 @@ use threadpool::ThreadPool;
 
 use crate::{
     duplicate_group::DuplicateGroup,
-    file_data::file_data::FileData,
+    file_data::FileData,
     file_db::{
         self,
         file_db::{add_file, get_files, transaction, update_record},
