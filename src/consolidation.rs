@@ -64,7 +64,7 @@ pub(crate) fn consolidate_groups(
 }
 
 fn consolidate_group(duplicate_group: &mut DuplicateGroup, options: &Options) -> Result<()> {
-    choose_group_to_preserve(duplicate_group);
+    choose_group_to_preserve(duplicate_group, options);
     if duplicate_group.duplicates.len() <= 1 {
         // There must have been errors processing these files, and now
         // there's nothing left to do with this group.
@@ -128,7 +128,7 @@ fn has_not_found_links(duplicate_group: &[PathBuf]) -> Result<bool> {
     Ok(extra_links)
 }
 
-pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup) {
+pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup, options: &Options) {
     let mut largest_idx = None;
     let mut largest_group = None;
     let mut idx_with_other_links = None;
@@ -153,12 +153,16 @@ pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup) {
                 continue;
             }
         };
+
         if has_not_found_links {
-            if idx_with_other_links.is_some() {
+            if !options.allow_incomplete_consolidation && idx_with_other_links.is_some() {
                 // We can't reclaim all the space. This should be handled manually.
                 // (One group with extra links would be okay--we could preserve those
                 // files but re-link the other groups.)
-                warn!("Duplicate groups have more than one not-found hard link, so all space can't be reclaimed. Skipping:");
+                warn!(
+                    "Duplicate groups have more than one not-found hard link, \
+                    so all space can't be reclaimed. Skipping:"
+                );
                 warn_path_list(elem);
 
                 duplicate_group.duplicates.remove(i);

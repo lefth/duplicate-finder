@@ -131,6 +131,12 @@ pub(crate) struct Options {
     #[structopt(skip)]
     pub db_must_exist: bool,
 
+    #[structopt(long)]
+    /// Continue consolidation even if there are other linked files that were not detected.
+    /// This means space will not be saved in some cases, but that's a necessity if running
+    /// with a backup copy (the backup copy normally being created with hard links).
+    pub allow_incomplete_consolidation: bool,
+
     #[structopt(skip)]
     /// The max total buffer memory for reading all files
     pub total_buffer_max: u64,
