@@ -25,7 +25,6 @@ pub(crate) mod file_db {
         }?;
 
         // much bigger cache
-        conn.execute("PRAGMA cache_size = 40000", [])?;
         conn.execute("PRAGMA encoding = \"UTF-8\"", [])?;
 
         // Create a table for files and a lookup for their directories. Don't add indices;
