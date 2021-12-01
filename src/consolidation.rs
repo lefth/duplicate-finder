@@ -20,7 +20,8 @@ use anyhow::{bail, Context, Result};
 use log::{debug, error, info, trace, warn, LevelFilter};
 use uuid::Uuid;
 
-use crate::types::{DuplicateGroup, Options};
+use crate::duplicate_group::DuplicateGroup;
+use crate::types::Options;
 
 pub(crate) fn consolidate_groups(
     rx_duplicates: mpsc::Receiver<DuplicateGroup>,

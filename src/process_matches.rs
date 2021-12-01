@@ -23,12 +23,13 @@ use serde::{ser::SerializeSeq, Serializer};
 use threadpool::ThreadPool;
 
 use crate::{
+    duplicate_group::DuplicateGroup,
     file_data::file_data::FileData,
     file_db::{
         self,
         file_db::{add_file, get_files, transaction, update_record},
     },
-    types::{Basename, Checksum, Deviceno, Directory, DuplicateGroup, Inode, Options, RowId, Size},
+    types::{Basename, Checksum, Deviceno, Directory, Inode, Options, RowId, Size},
     JobId,
 };
 #[allow(unused_imports)]

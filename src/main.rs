@@ -13,6 +13,7 @@ use structopt::StructOpt;
 use log::{debug, error, info, trace, warn, LevelFilter};
 
 mod consolidation;
+mod duplicate_group;
 mod file_data;
 mod file_db;
 mod process_matches;
