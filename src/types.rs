@@ -18,7 +18,7 @@ use std::os::windows::ffi::{OsStrExt, OsStringExt};
 #[cfg(windows)]
 use anyhow::bail;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use rusqlite::{
     types::{FromSql, FromSqlError, ToSqlOutput, Value, ValueRef},
     *,
@@ -73,17 +73,19 @@ pub(crate) struct Options {
     /// possible)
     pub show_fully_hardlinked: bool,
 
+    #[structopt(short, long)]
+    /// Print files that are duplicated on disk, but not already hard linked.
+    pub print_duplicates: bool,
+
     #[structopt(short, long, parse(from_occurrences))]
-    /// Reduces level of verbosity. `-qqq` will suppress printing duplicate files.
-    /// The computation will still happen, and JSON may still be saved
-    // (In debug mode it would be `-qqqq` for total silence)
+    /// Reduces level of verbosity.
     pub quiet: i32,
 
     #[structopt(short, long, parse(from_occurrences))]
     /// Increases level of verbosity
     pub verbose: i32,
 
-    #[structopt(short = "j", long = "write_json")]
+    #[structopt(short = "j", long = "write-json")]
     /// Save output to a file as JSON
     pub save_json_filename: Option<OsString>,
 
@@ -156,7 +158,7 @@ impl Options {
         HandlerGuard(Arc::clone(&self.interrupt_handlers))
     }
 
-    pub fn init(&mut self) {
+    pub fn init(&mut self) -> Result<()> {
         if self.resume_stage3 || self.resume_stage4 {
             self.no_truncate_db = true;
             self.db_must_exist = true;
@@ -168,6 +170,13 @@ impl Options {
             } else {
                 warn!("--dry-run being ignored, since consolidation was not requested.");
             }
+        }
+
+        if !self.consolidate && !self.print_duplicates && !self.save_json_filename.is_some() {
+            bail!(
+                "No operation chosen! Must use one of: \
+                    --consolidate, --print-duplicates, --write-json <filename>"
+            );
         }
 
         // TODO: Tune these parameters. We don't want to run out of memory.
@@ -184,6 +193,8 @@ impl Options {
             10 * 1 << 20
         };
         self.buffer_max = self.total_buffer_max / 3;
+
+        Ok(())
     }
 }
 

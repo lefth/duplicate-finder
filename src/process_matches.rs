@@ -15,7 +15,6 @@ use std::{
 
 use anyhow::Result;
 use bytesize::ByteSize;
-use log::LevelFilter;
 use memmap::Mmap;
 use multi_semaphore::Semaphore;
 use rusqlite::{params, Connection};
@@ -585,17 +584,15 @@ fn compute_checksum(
 }
 pub(crate) struct PrintMatches {}
 
-// This does NOT implement ProcessMatches because the return type is different.
+// This does NOT implement ProcessMatches because the args and return type are different.
 impl PrintMatches {
     pub(crate) fn process_matches(
-        groups: Option<Vec<Vec<RowId>>>, // not candidate_groups--these should be the final matches
+        groups: Vec<Vec<RowId>>, // not candidate_groups--these should be the final matches
         conn: &mut Connection,
         options: &Arc<Options>,
         tx: mpsc::SyncSender<DuplicateGroup>,
     ) -> Result<()> {
         debug!("Processing matches for printing or consolidation.");
-        assert!(groups.is_some());
-        let groups = groups.expect("PrintMatches needs to be given an existing list");
 
         let file_count = Arc::new(AtomicU64::new(0));
 
@@ -660,18 +657,18 @@ impl PrintMatches {
                     seq.serialize_element(&group)?;
                 }
 
-                if log::max_level() != LevelFilter::Off {
+                if options.print_duplicates {
                     // Display this group of duplicate files:
                     for hardlinked_subgroup in &group.duplicates {
                         if hardlinked_subgroup.len() > 1 {
-                            info!("Hard linked duplicates:");
+                            println!("Hard linked duplicates:");
                             print_path_list(hardlinked_subgroup, "\t- ");
                         } else {
                             print_path_list(hardlinked_subgroup, "- ");
                         }
                     }
 
-                    info!(""); // print a newline
+                    println!(""); // print a newline
                 }
 
                 tx.send(group)?;
@@ -693,9 +690,9 @@ impl PrintMatches {
 fn print_path_list(paths: &[PathBuf], prefix: &str) {
     for path in paths {
         if let Some(path) = path.to_str() {
-            info!("{}{}", prefix, path);
+            println!("{}{}", prefix, path);
         } else {
-            info!("{}{:?}", prefix, path);
+            println!("{}{:?}", prefix, path);
         }
     }
 }

@@ -86,7 +86,7 @@ fn init(options: &Options) -> Result<()> {
 
 fn main() -> Result<()> {
     let mut options = Options::from_args();
-    options.init();
+    options.init()?;
 
     init(&options)?;
 
@@ -121,7 +121,7 @@ fn main() -> Result<()> {
     thread::scope(|s| -> Result<()> {
         let (tx, rx) = mpsc::sync_channel(100);
         let handle = s.spawn(|_| -> Result<()> {
-            PrintMatches::process_matches(Some(final_matches), &mut conn, &options, tx)?;
+            PrintMatches::process_matches(final_matches, &mut conn, &options, tx)?;
 
             conn.close().map_err(|err| err.1)?;
             if !options.keep_db_file && options.db_file != ":memory:" {
