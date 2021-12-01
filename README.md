@@ -11,19 +11,26 @@ Warning: this is alpha-level software. It has not had a lot of real world testin
 
 #### USAGE:
 ```
-    duplicates [FLAGS] [OPTIONS] [starting-paths]...
+    duplicates <operation...> [FLAGS] [OPTIONS] [starting-paths]...
+```
+
+#### OPERATIONS:
+    At least one operation must be chosen:
+```
+        --consolidate                       Attempt to hard link duplicate files to reclaim space. This is
+                                            a testing feature and you should back up your files before
+                                            using it
+    -j, --write-json <save-json-filename>   Save output to a file as JSON
+    -p, --print-duplicates                  Print files that are duplicated on disk, but not already hard
+                                            linked
 ```
 
 #### FLAGS:
 ```
-FLAGS:
         --allow-incomplete-consolidation    Continue consolidation even if there are other linked files
                                             that were not detected. This means space will not be saved
                                             in some cases, but that's a necessity if running with a backup
                                             copy (the backup copy normally being created with hard links)
-        --consolidate                       Attempt to hard link duplicate files to reclaim space. This is
-                                            a testing feature and you should back up your files before
-                                            using it
     -n, --dry-run                           Don't consolidate files, but print what would be done
     -h, --help                              Prints help information
     -k, --keep-db-file                      Don't delete the sqlite file. For debugging
@@ -32,8 +39,7 @@ FLAGS:
                                             is also a possibility of crashes when files are modified
                                             during reading
         --no-truncate-db                    Keep the database file from the previous run
-    -q, --quiet                             Reduces level of verbosity. `-qqq` will suppress printing
-                                            duplicate files
+    -q, --quiet                             Reduces level of verbosity.
                                             The computation will still happen, and JSON may still be saved
         --resume-stage3                     Resume a previous operation at stage 3: this computes any
                                             necessary full checksums, based on candidates (with matching
@@ -52,14 +58,21 @@ FLAGS:
 
 #### OPTIONS:
 ```
-        --db-file <db-file>                  Choose a file, new or existing, for the database. :memory:
-                                             is a special value [default: metadata.sqlite]
-    -t, --max-io-threads <max-io-threads>    How many threads should read small files from disk at a
-                                             time? Large files use one thread at a time. [default: 8]
-    -M, --max-size <max-size>                Skip files greater than this size, as they are probably not
-                                             real files. 0 bytes means skip nothing
-                                             [default: 100000000000]
-    -m, --min-size <min-size>                Minimum size (bytes) of files to check [default: 4096]
+        --buffer-megabytes <buffer-megabytes>
+            Tell the program how much memory it can use as buffers for reading files. This is not
+            necessary if using --mmap since large files won't be read to buffers anyway. Small buffers are
+            allowed but will slow down operation: --buffer-megabytes 0.2
+        --db-file <db-file>
+            Choose a file, new or existing, for the database. :memory: is a special value [default:
+            metadata.sqlite]
+
+    -t, --max-io-threads <max-io-threads>
+            How many threads should read small files from disk at a time? Large files use one thread at a
+            time [default: 8]
+    -M, --max-size <max-size>
+            Skip files greater than this size, as they are probably not real files. 0 bytes means skip
+            nothing [default: 100000000000]
+    -m, --min-size <min-size>                    Minimum size (bytes) of files to check [default: 4096]
 ```
 
 #### ARGS:
@@ -70,12 +83,18 @@ FLAGS:
 ## Examples
 To run with default options:
 ```
-duplicates ~
+duplicates --print-duplicates ~
 ```
 
 To see all files, more output, and keep a database of info on disk afterwards:
 ```
-duplicates ~ --min-size 1 --db-file metadata.sqlite --keep-db-file -v --show-fully-hardlinked --print-json
+duplicates ~ --min-size 1 -v --show-fully-hardlinked --write-json duplicates.json -k
+```
+
+To consolidate duplicate files after the database has already been created (and kept
+with `-k`):
+```
+duplicates --consolidate --allow-incomplete-consolidation --resume-stage4 --no-truncate-db -k
 ```
 
 ## Installation
@@ -116,3 +135,5 @@ CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER=arm-linux-musleabihf-gcc CC='
 ```
 
 If the build fails, it may be necessary to remove the `target` directory and try again.
+
+<!-- vim: textwidth=106: -->
