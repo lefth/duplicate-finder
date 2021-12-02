@@ -31,7 +31,7 @@ type JobId = (Inode, Deviceno);
 fn init(options: &Options) -> Result<()> {
     let mut log_builder = env_logger::Builder::new();
     log_builder.filter_level(LevelFilter::Trace);
-    if !cfg!(debug_assertions) {
+    if !cfg!(debug_assertions) && !options.log {
         // Output looks better in releases if it's not written like a log file:
         log_builder.format_module_path(false);
         log_builder.format_level(false);

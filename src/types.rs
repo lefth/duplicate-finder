@@ -126,6 +126,10 @@ pub(crate) struct Options {
     #[structopt(long)]
     pub buffer_megabytes: Option<f64>,
 
+    /// Don't disable extra logger info on release builds. Undocumented option
+    #[structopt(long, hidden = true)]
+    pub log: bool,
+
     // Shared state that's not from program arguments:
     #[structopt(skip)]
     pub interrupt_handlers: Arc<HandlerList>,
