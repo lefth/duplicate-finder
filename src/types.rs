@@ -15,10 +15,7 @@ use std::os::unix::prelude::{OsStrExt, OsStringExt};
 #[cfg(windows)]
 use std::os::windows::ffi::{OsStrExt, OsStringExt};
 
-#[cfg(windows)]
-use anyhow::bail;
-
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use rusqlite::{
     types::{FromSql, FromSqlError, ToSqlOutput, Value, ValueRef},
     *,
@@ -346,6 +343,21 @@ impl<T: ?Sized + AsRef<OsStr>> From<&T> for Basename {
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
 pub(crate) struct Checksum(pub [u8; blake3::OUT_LEN]);
+
+impl FromSql for Checksum {
+    fn column_result(value: ValueRef<'_>) -> Result<Self, FromSqlError> {
+        match value {
+            rusqlite::types::ValueRef::Blob(bytes) => {
+                let checksum = bytes
+                    .try_into()
+                    .context("Blob has wrong byte length for checksum")
+                    .map_err(|err| FromSqlError::Other(Box::from(err)));
+                checksum
+            }
+            _ => Err(FromSqlError::InvalidType),
+        }
+    }
+}
 
 impl std::fmt::Display for Checksum {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
