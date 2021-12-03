@@ -24,10 +24,7 @@ use threadpool::ThreadPool;
 use crate::{
     duplicate_group::DuplicateGroup,
     file_data::FileData,
-    file_db::{
-        self,
-        file_db::{add_file, get_files, transaction, update_record},
-    },
+    file_db::file_db::{self, *},
     types::{Basename, Checksum, Deviceno, Directory, Inode, Options, RowId, Size},
     JobId,
 };
@@ -147,7 +144,7 @@ impl ProcessMatches for GetFiles {
                 if (count.fetch_add(1, Relaxed) + 1) % 1000 == 0 {
                     // Commit and start a new transaction, in case the operation is interrupted
                     transaction.commit()?;
-                    transaction = Box::new(file_db::file_db::transaction(conn)?);
+                    transaction = Box::new(file_db::transaction(conn)?);
                 }
 
                 let path = dir_entry.path();
@@ -448,7 +445,7 @@ fn store_checksums(
                     trace!("Remembed checksum result: {}", file.row_id);
                     let result = Ok(existing_checksum);
                     counter.fetch_add(1, Relaxed);
-                    tx.send((pair, result, Some(file.row_id))).unwrap();
+                    tx.send((pair, result)).unwrap();
                 } else {
                     trace!("Sending checksum job to a thread worker: {}", file.row_id);
                     let path = file.path().unwrap();
@@ -469,7 +466,7 @@ fn store_checksums(
                             options,
                         );
                         counter.fetch_add(1, Relaxed);
-                        tx.send((pair, result, None)).unwrap();
+                        tx.send((pair, result)).unwrap();
                     });
                 }
 
@@ -486,10 +483,10 @@ fn store_checksums(
         if n % 1000 == 0 {
             // Commit and start a new transaction, in case the operation is interrupted
             transaction.commit()?;
-            transaction = Box::new(file_db::file_db::transaction(conn)?);
+            transaction = Box::new(file_db::transaction(conn)?);
         }
         trace!("Receiving result {} of {}", n, files_in_queue.len());
-        let (pair, result, cached_row_id) = rx.recv()?;
+        let (pair, result) = rx.recv()?;
         trace!(
             "Got result {} of {} ({})",
             n,
@@ -508,33 +505,20 @@ fn store_checksums(
         for rowid in waiting_for_checksum.iter() {
             checksum_data.insert(*rowid, checksum);
         }
-        // Note: even if the record was already cached, we still have to go through
-        // this list to update any other records that share the same inode.
-        // But we can skip updating this one file.
-        if let Some(cached_row_id) = cached_row_id {
-            waiting_for_checksum.swap_remove(
-                waiting_for_checksum
-                    .iter()
-                    .position(|e| e == &cached_row_id)
-                    .unwrap(),
-            );
-        }
-        if waiting_for_checksum.is_empty() {
-            continue;
-        }
+
         trace!(
-            "Updating {} records for inode {:?}",
+            "Updating {} records for: {:?}",
             waiting_for_checksum.len(),
             pair
         );
-        for rowid in waiting_for_checksum {
-            update_record(
-                &transaction,
-                *rowid,
-                &[&checksum_column_name],
-                params![checksum],
-            )?;
-        }
+        let (inode, deviceno) = pair;
+        update_records(
+            &transaction,
+            inode,
+            deviceno,
+            &[&checksum_column_name],
+            params![checksum],
+        )?;
     }
     pool.join();
     assert!(rx.try_recv().is_err()); // the pool should have been finished already, after we got enough data

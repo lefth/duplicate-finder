@@ -374,4 +374,41 @@ pub(crate) mod file_db {
 
         Ok(())
     }
+
+    /// Update the given fields for all hard linked files (with the same inode/device).
+    pub(crate) fn update_records(
+        conn: &Transaction,
+        inode: Inode,
+        deviceno: Deviceno,
+        fields: &[&str],
+        values: &[&dyn ToSql],
+    ) -> Result<()> {
+        assert!(fields.len() > 0);
+        assert!(fields.len() == values.len());
+        // The inode/deviceno are params 1 and 2, so these will start at 3:
+        let update_parts = fields
+            .iter()
+            .zip(3..)
+            .map(|(&field, n)| format!("{} = ?{}", field, n))
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        let mut statement = conn.prepare_cached(&format!(
+            "UPDATE files SET {} WHERE inode = ?1  AND deviceno = ?2",
+            update_parts
+        ))?;
+
+        let params = params![&inode.0, &deviceno.0];
+        let params = params.into_iter().chain(values.into_iter().map(|val| val));
+        let update_count = statement.execute(params_from_iter(params))?;
+        trace!(
+            "Updated {:?} for {} rows matching: {:?}, {:?}",
+            fields,
+            update_count,
+            &inode,
+            &deviceno,
+        );
+
+        Ok(())
+    }
 }
