@@ -97,8 +97,8 @@ pub(crate) struct Options {
     pub dry_run: bool,
 
     #[structopt(short, long)]
-    /// Don't delete the sqlite file. For debugging
-    pub keep_db_file: bool,
+    /// Don't delete the sqlite file after operations are complete.
+    pub keep_db: bool,
 
     #[structopt(
         short = "t",
@@ -177,9 +177,9 @@ impl Options {
             self.no_truncate_db = true;
         }
 
-        if self.remember_checksums && !self.keep_db_file {
+        if self.remember_checksums && !self.keep_db {
             warn!("Do you really want to remember checksums now but delete the DB afterwards?");
-            warn!("Press Ctrl+c to stop execution and re-run with --keep-db-file.");
+            warn!("Press Ctrl+c to stop execution and re-run with --keep-db.");
             std::thread::sleep(Duration::from_secs(3));
         }
 

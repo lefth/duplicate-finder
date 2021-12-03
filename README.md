@@ -33,7 +33,7 @@ Warning: this is alpha-level software. It has not had a lot of real world testin
                                             copy (the backup copy normally being created with hard links)
     -n, --dry-run                           Don't consolidate files, but print what would be done
     -h, --help                              Prints help information
-    -k, --keep-db-file                      Don't delete the sqlite file. For debugging
+    -k, --keep-db                           Don't delete the sqlite file after operations are complete
         --mmap                              Use mmap. This increases performance of reading large files
                                             on SSDs, but decreases performance on spinning drives. There
                                             is also a possibility of crashes when files are modified

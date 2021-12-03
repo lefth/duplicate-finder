@@ -124,7 +124,7 @@ fn main() -> Result<()> {
             PrintMatches::process_matches(final_matches, &mut conn, &options, tx)?;
 
             conn.close().map_err(|err| err.1)?;
-            if !options.keep_db_file && options.db_file != ":memory:" {
+            if !options.keep_db && options.db_file != ":memory:" {
                 fs::remove_file(&options.db_file)?;
             }
             Ok(())
