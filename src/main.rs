@@ -20,7 +20,7 @@ mod process_matches;
 mod types;
 use crate::{
     consolidation::*,
-    file_db::file_db::init_connection,
+    file_db::init_connection,
     process_matches::ProcessMatches,
     process_matches::{GetFiles, GroupByFullChecksum, GroupByShortChecksum, PrintMatches},
     types::*,
@@ -94,10 +94,10 @@ fn main() -> Result<()> {
 
     let options = Arc::new(options);
     let final_matches = if options.resume_stage4 {
-        file_db::file_db::get_matching_checksums(&conn, "checksum", &options)?
+        file_db::get_matching_checksums(&conn, "checksum", &options)?
     } else {
         let candidate_groups = if options.resume_stage3 {
-            file_db::file_db::get_matching_checksums(&conn, "shortchecksum", &options)?
+            file_db::get_matching_checksums(&conn, "shortchecksum", &options)?
         } else {
             let _handler_guard =
                 options.push_interrupt_handler(|| eprintln!("\nFinding all files"));

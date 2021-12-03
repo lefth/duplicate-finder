@@ -24,7 +24,7 @@ use threadpool::ThreadPool;
 use crate::{
     duplicate_group::DuplicateGroup,
     file_data::FileData,
-    file_db::file_db::{self, *},
+    file_db::{self, *},
     types::{Basename, Checksum, Deviceno, Directory, Inode, Options, RowId, Size},
     JobId,
 };
