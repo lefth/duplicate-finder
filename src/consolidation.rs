@@ -21,7 +21,7 @@ use log::{debug, error, info, trace, warn, LevelFilter};
 use uuid::Uuid;
 
 use crate::duplicate_group::DuplicateGroup;
-use crate::types::Options;
+use crate::options::Options;
 
 pub(crate) fn user_confirmation(options: &Options) -> bool {
     options.dry_run || {

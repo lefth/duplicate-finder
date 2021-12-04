@@ -8,7 +8,8 @@ use serde::{
 
 use crate::{
     file_data::FileData,
-    types::{Deviceno, Inode, Options},
+    options::Options,
+    types::{Deviceno, Inode},
 };
 
 /// All filenames stored within are duplicates, but they are grouped by device/inode.

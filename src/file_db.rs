@@ -18,7 +18,7 @@ use rusqlite::{
     OpenFlags, ToSql, Transaction,
 };
 
-use crate::{file_data::FileData, types::*};
+use crate::{file_data::FileData, options::Options, types::*};
 
 pub(crate) fn init_connection(options: &mut Options) -> Result<Connection> {
     let conn = if options.db_file == ":memory:" {

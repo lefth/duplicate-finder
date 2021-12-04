@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use anyhow::{Context, Result};
 use crossbeam_utils::thread;
+use options::Options;
 use structopt::lazy_static::lazy_static;
 use structopt::StructOpt;
 
@@ -16,6 +17,7 @@ mod consolidation;
 mod duplicate_group;
 mod file_data;
 mod file_db;
+mod options;
 mod process_matches;
 mod types;
 use crate::{

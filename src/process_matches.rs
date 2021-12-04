@@ -25,7 +25,8 @@ use crate::{
     duplicate_group::DuplicateGroup,
     file_data::FileData,
     file_db::{self, *},
-    types::{Basename, Checksum, Deviceno, Directory, Inode, Options, RowId, Size},
+    options::Options,
+    types::{Basename, Checksum, Deviceno, Directory, Inode, RowId, Size},
     JobId,
 };
 #[allow(unused_imports)]
