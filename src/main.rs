@@ -30,7 +30,8 @@ use crate::{
 
 type JobId = (Inode, Deviceno);
 
-fn init(options: &Options) -> Result<()> {
+fn init(options: &mut Options) -> Result<()> {
+    // The logger must be initialized first, to warn about issues with later init:
     let mut log_builder = env_logger::Builder::new();
     log_builder.filter_level(LevelFilter::Trace);
     if !cfg!(debug_assertions) && !options.log {
@@ -53,6 +54,8 @@ fn init(options: &Options) -> Result<()> {
     let mut verbosity: i32 = if cfg!(debug_assertions) { 4 } else { 3 };
     verbosity += options.verbose - options.quiet;
     log::set_max_level(log_levels[verbosity.clamp(0, log_levels.len() as i32 - 1) as usize]);
+
+    options.validate()?;
 
     // Set the interrupt handler to call the top element in a stack of closures.
     // So new status checks can be created, and the old checks will take over
@@ -88,9 +91,7 @@ fn init(options: &Options) -> Result<()> {
 
 fn main() -> Result<()> {
     let mut options = Options::from_args();
-    options.init()?;
-
-    init(&options)?;
+    init(&mut options)?;
 
     let mut conn = init_connection(&mut options)?;
 

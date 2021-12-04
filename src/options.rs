@@ -152,7 +152,9 @@ impl Options {
         HandlerGuard(Arc::clone(&self.interrupt_handlers))
     }
 
-    pub fn init(&mut self) -> Result<()> {
+
+    /// Check for errors and make needed automatic changes due to implications from different options.
+    pub fn validate(&mut self) -> Result<()> {
         if self.resume_stage3 || self.resume_stage4 {
             self.no_truncate_db = true;
             self.db_must_exist = true;
