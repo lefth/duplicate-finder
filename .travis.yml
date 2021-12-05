@@ -4,7 +4,7 @@ rust:
 - nightly
 - beta
 - stable
-- 1.50.0
+- 1.56.0
 before_script:
 - |
   pip install 'travis-cargo<0.2' --user &&
