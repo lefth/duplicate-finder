@@ -64,12 +64,27 @@ impl Display for RowId {
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
 pub(crate) struct Deviceno(pub u64);
+impl ToSql for Deviceno {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        self.0.to_sql()
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
 pub(crate) struct Inode(pub u64);
+impl ToSql for Inode {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        self.0.to_sql()
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
 pub(crate) struct DirectoryId(pub u64);
+impl ToSql for DirectoryId {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        self.0.to_sql()
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone)]
 pub(crate) struct Directory(pub PathBuf);
@@ -83,13 +98,13 @@ impl Deref for Directory {
 
 impl ToSql for Directory {
     fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
-        to_sql(&self.0)
+        path_to_sql(&self.0)
     }
 }
 
 impl FromSql for Directory {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        from_sql_column_result(value).map(Directory)
+        path_from_sql_column_result(value).map(Directory)
     }
 }
 
@@ -105,13 +120,13 @@ pub(crate) struct Basename(pub PathBuf);
 
 impl ToSql for Basename {
     fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
-        to_sql(&self.0)
+        path_to_sql(&self.0)
     }
 }
 
 impl FromSql for Basename {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
-        from_sql_column_result(value).map(Basename)
+        path_from_sql_column_result(value).map(Basename)
     }
 }
 
@@ -197,9 +212,9 @@ impl TryFrom<Vec<u8>> for Checksum {
     }
 }
 
-fn to_sql(path: &'_ Path) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
+fn path_to_sql(path: &'_ Path) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
     if let Some(s) = path.to_str() {
-        Ok(ToSqlOutput::Borrowed(ValueRef::Text(s.as_bytes())))
+        s.as_bytes().to_sql()
     } else {
         let bytes = str_to_bytes(path.as_os_str());
         debug!(
@@ -210,7 +225,7 @@ fn to_sql(path: &'_ Path) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
     }
 }
 
-fn from_sql_column_result(
+fn path_from_sql_column_result(
     value: rusqlite::types::ValueRef<'_>,
 ) -> rusqlite::types::FromSqlResult<PathBuf> {
     match value {
@@ -225,6 +240,19 @@ fn from_sql_column_result(
             Ok(PathBuf::from(s))
         }
         _ => Err(FromSqlError::InvalidType),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Uniquely identify file data on disk. (Files with the same FileIdent are hard linked)
+pub(crate) struct FileIdent {
+    pub inode: Inode,
+    pub deviceno: Deviceno,
+}
+
+impl FileIdent {
+    pub(crate) fn new(inode: Inode, deviceno: Deviceno) -> FileIdent {
+        FileIdent { inode, deviceno }
     }
 }
 

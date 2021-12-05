@@ -25,10 +25,7 @@ use crate::{
     file_db::init_connection,
     process_matches::ProcessMatches,
     process_matches::{GetFiles, GroupByFullChecksum, GroupByShortChecksum, PrintMatches},
-    types::*,
 };
-
-type JobId = (Inode, Deviceno);
 
 fn init(options: &mut Options) -> Result<()> {
     // The logger must be initialized first, to warn about issues with later init:
@@ -95,12 +92,19 @@ fn main() -> Result<()> {
 
     let mut conn = init_connection(&mut options)?;
 
+    if options.migrate_db {
+        file_db::migrate_db(&mut conn)?;
+        if options.operation_count() == 1 {
+            return Ok(());
+        }
+    }
+
     let options = Arc::new(options);
     let final_matches = if options.resume_stage4 {
-        file_db::get_matching_checksums(&conn, "checksum", &options)?
+        file_db::get_with_checksum(&conn, "checksum", &options)?
     } else {
         let candidate_groups = if options.resume_stage3 {
-            file_db::get_matching_checksums(&conn, "shortchecksum", &options)?
+            file_db::get_with_checksum(&conn, "shortchecksum", &options)?
         } else {
             let _handler_guard =
                 options.push_interrupt_handler(|| eprintln!("\nFinding all files"));

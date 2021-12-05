@@ -1,8 +1,8 @@
 use std::{
     ffi::OsString,
+    io::{self, BufRead},
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use anyhow::{bail, Result};
@@ -57,6 +57,11 @@ pub(crate) struct Options {
     /// possible)
     pub show_fully_hardlinked: bool,
 
+    /// Migrate a saved DB from version 0.0.1 or 0.0.2 to the current format.
+    /// Implies --no-truncate-db, as well as --keep-db if used without another operation.
+    #[structopt(long)]
+    pub migrate_db: bool,
+
     #[structopt(short, long)]
     /// Print files that are duplicated on disk, but not already hard linked.
     pub print_duplicates: bool,
@@ -110,15 +115,16 @@ pub(crate) struct Options {
     #[structopt(long)]
     pub buffer_megabytes: Option<f64>,
 
-    /// Don't disable extra logger info on release builds. Undocumented option
+    /// Don't disable extra logger info on release builds. Undocumented option for debugging.
     #[structopt(long, hidden = true)]
     pub log: bool,
 
     /// Don't redo checksums that are already stored in a database.
     /// Useful for resuming an operation without knowing at what stage it stopped,
     /// or adding additional paths to an operation that was completed.
+    /// This option only makes sense with --no-truncate-db.
     #[structopt(long)]
-    pub remember_checksums: bool,
+    pub no_remember_checksums: bool,
 
     // Shared state that's not from program arguments:
     #[structopt(skip)]
@@ -152,6 +158,13 @@ impl Options {
         HandlerGuard(Arc::clone(&self.interrupt_handlers))
     }
 
+    /// Get the number of operations requested by the user
+    pub(crate) fn operation_count(&self) -> u8 {
+        self.consolidate as u8
+            + self.print_duplicates as u8
+            + self.migrate_db as u8
+            + self.save_json_filename.is_some() as u8
+    }
 
     /// Check for errors and make needed automatic changes due to implications from different options.
     pub fn validate(&mut self) -> Result<()> {
@@ -160,15 +173,17 @@ impl Options {
             self.db_must_exist = true;
         }
 
-        if self.remember_checksums && !self.no_truncate_db {
-            info!("Assuming --no-truncate-db since --remember-checksums was used.");
+        if self.no_remember_checksums && !self.no_truncate_db {
+            info!("--no-remember-checksums has no effect since --no-truncate-db was not used.");
             self.no_truncate_db = true;
         }
 
-        if self.remember_checksums && !self.keep_db {
-            warn!("Do you really want to remember checksums now but delete the DB afterwards?");
-            warn!("Press Ctrl+c to stop execution and re-run with --keep-db.");
-            std::thread::sleep(Duration::from_secs(3));
+        if self.no_truncate_db && !self.keep_db {
+            warn!("Do you really want to remember keep the previous database now but delete it afterwards? [y/N]");
+            let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
+            if !input_line.to_lowercase().starts_with("y") {
+                std::process::exit(1);
+            }
         }
 
         if self.dry_run {
@@ -179,10 +194,22 @@ impl Options {
             }
         }
 
-        if !self.consolidate && !self.print_duplicates && !self.save_json_filename.is_some() {
+        if self.migrate_db {
+            self.db_must_exist = true;
+            if !self.no_truncate_db {
+                info!("Assuming --no-truncate-db since --migrate-db was used.");
+                self.no_truncate_db = true;
+            }
+            if !self.keep_db && self.operation_count() == 1 {
+                info!("Assuming --keep-db since --migrate-db was used without another operation.");
+                self.keep_db = true;
+            }
+        }
+
+        if self.operation_count() == 0 {
             bail!(
-                "No operation chosen! Must use one of: \
-                    --consolidate, --print-duplicates, --write-json <filename>"
+                "No operation chosen! Must use at least one of: \
+                    --consolidate, --print-duplicates, --write-json <filename>, --migrate-db"
             );
         }
 
@@ -202,15 +229,6 @@ impl Options {
         self.buffer_max = self.total_buffer_max / 3;
 
         Ok(())
-    }
-}
-
-pub(crate) struct HandlerGuard(Arc<HandlerList>);
-impl Drop for HandlerGuard {
-    /// Restore the previous interrupt handler.
-    fn drop(&mut self) {
-        let mut lock = self.0.lock().unwrap();
-        lock.pop();
     }
 }
 
@@ -237,3 +255,11 @@ fn get_positive_int(s: &str) -> Result<u32, String> {
     }
 }
 
+pub(crate) struct HandlerGuard(Arc<HandlerList>);
+impl Drop for HandlerGuard {
+    /// Restore the previous interrupt handler.
+    fn drop(&mut self) {
+        let mut lock = self.0.lock().unwrap();
+        lock.pop();
+    }
+}

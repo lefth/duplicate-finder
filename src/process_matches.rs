@@ -26,14 +26,10 @@ use crate::{
     file_data::FileData,
     file_db::{self, *},
     options::Options,
-    types::{Basename, Checksum, Deviceno, Directory, Inode, RowId, Size},
-    JobId,
+    types::{Basename, Checksum, Deviceno, Directory, FileIdent, Inode, Size},
 };
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
-
-// A file is uniquely identified by its device/inode.
-type FileId = (Inode, Deviceno);
 
 const SHORT_CHUNK_SIZE: usize = 4096;
 
@@ -45,17 +41,17 @@ pub(crate) trait ProcessMatches {
     /// This method refines lists of possible duplicates to smaller lists that pass more checks.
     /// Do not call this directly; call [`process_matches`] instead.
     fn process_matches_(
-        candidate_groups: Option<Vec<Vec<RowId>>>,
+        candidate_groups: Option<Vec<Vec<FileIdent>>>,
         conn: &mut Connection,
         options: &Arc<Options>,
-    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>>;
+    ) -> Result<Box<dyn Iterator<Item = Vec<FileIdent>>>>;
 
     /// Wrapper for [`process_matches_`].
     fn process_matches(
-        candidate_groups: Option<Vec<Vec<RowId>>>,
+        candidate_groups: Option<Vec<Vec<FileIdent>>>,
         conn: &mut Connection,
         options: &Arc<Options>,
-    ) -> Result<Vec<Vec<RowId>>> {
+    ) -> Result<Vec<Vec<FileIdent>>> {
         Ok(Self::process_matches_(candidate_groups, conn, options)?
             .into_iter()
             // It's not a duplicate group if just one file:
@@ -71,10 +67,10 @@ impl ProcessMatches for GetFiles {
     /// Find all files in the given paths (of the required size) and add their info to the database.
     /// Returns their row IDs.
     fn process_matches_(
-        candidate_groups: Option<Vec<Vec<RowId>>>,
+        candidate_groups: Option<Vec<Vec<FileIdent>>>,
         conn: &mut Connection,
         options: &Arc<Options>,
-    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
+    ) -> Result<Box<dyn Iterator<Item = Vec<FileIdent>>>> {
         #[cfg(unix)]
         use std::os::unix::prelude::MetadataExt;
         #[cfg(windows)]
@@ -100,7 +96,7 @@ impl ProcessMatches for GetFiles {
 
         debug!("Finding files in paths");
 
-        let mut row_ids: HashMap<Size, Vec<RowId>> = HashMap::new();
+        let mut inodes_by_size: HashMap<Size, Vec<FileIdent>> = HashMap::new();
 
         let mut transaction = Box::new(transaction(conn)?);
 
@@ -200,10 +196,7 @@ impl ProcessMatches for GetFiles {
                             .expect("Metadata must not be created with `DirEntry::metadata`")
                             as u64
                     }
-                    let row_id = add_file(
-                        &transaction,
-                        &Basename::from(&dir_entry.file_name()),
-                        &Directory::from(path.parent().unwrap()), // can't be empty; will be "."
+                    let file_ident = FileIdent::new(
                         Inode(
                             #[cfg(unix)]
                             md.ino(),
@@ -219,12 +212,18 @@ impl ProcessMatches for GetFiles {
                             #[cfg(windows)]
                             get_device_no_win(&md),
                         ),
+                    );
+                    let result = add_file(
+                        &transaction,
+                        &Basename::from(&dir_entry.file_name()),
+                        &Directory::from(path.parent().unwrap()), // can't be empty; will be "."
+                        &file_ident,
                         size,
                         options,
                     );
-                    match row_id {
-                        Ok(row_id) => row_ids.entry(size).or_default().push(row_id),
-                        Err(error) => warn!("Could not add file: {}", error),
+                    match result {
+                        Ok(_) => inodes_by_size.entry(size).or_default().push(file_ident),
+                        Err(err) => warn!("Could not add file: {}", err),
                     }
                 }
             }
@@ -234,11 +233,11 @@ impl ProcessMatches for GetFiles {
 
         debug!(
             "Found {} files while walking tree. Stage 1 took: {:?}",
-            row_ids.len(),
+            inodes_by_size.len(),
             start_time.elapsed()
         );
 
-        Ok(Box::new(row_ids.into_iter().map(|(_key, val)| val)))
+        Ok(Box::new(inodes_by_size.into_iter().map(|(_key, val)| val)))
     }
 }
 
@@ -246,10 +245,10 @@ pub(crate) struct GroupByShortChecksum {}
 
 impl ProcessMatches for GroupByShortChecksum {
     fn process_matches_(
-        candidate_groups: Option<Vec<Vec<RowId>>>,
+        candidate_groups: Option<Vec<Vec<FileIdent>>>,
         conn: &mut Connection,
         options: &Arc<Options>,
-    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
+    ) -> Result<Box<dyn Iterator<Item = Vec<FileIdent>>>> {
         // Stage 2: new candidates are old candidates with the same md5sum of the
         // first chunk_size bytes. This will prevent the need to check the whole file's
         // md5sum for large files that just happen to have identical size.
@@ -270,10 +269,10 @@ pub(crate) struct GroupByFullChecksum {}
 
 impl ProcessMatches for GroupByFullChecksum {
     fn process_matches_(
-        candidate_groups: Option<Vec<Vec<RowId>>>,
+        candidate_groups: Option<Vec<Vec<FileIdent>>>,
         conn: &mut Connection,
         options: &Arc<Options>,
-    ) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
+    ) -> Result<Box<dyn Iterator<Item = Vec<FileIdent>>>> {
         // Stage 3: current candidates are those with matching size and short checksum.
         // New groups (not candidates) will be those with matching size and full checksums.
 
@@ -297,10 +296,10 @@ fn get_store_checksums(
     checksum_description: &'static str,
     checksum_column_name: &str,
     chunk_size: usize,
-    candidate_groups: Option<Vec<Vec<RowId>>>,
+    candidate_groups: Option<Vec<Vec<FileIdent>>>,
     conn: &mut Connection,
     options: &Arc<Options>,
-) -> Result<Box<dyn Iterator<Item = Vec<RowId>>>> {
+) -> Result<Box<dyn Iterator<Item = Vec<FileIdent>>>> {
     assert!(candidate_groups.is_some());
     let candidate_groups =
         candidate_groups.expect("get_store_checksums needs to be given an existing list");
@@ -319,7 +318,7 @@ fn get_store_checksums(
     let candidate_groups =
         candidate_groups
             .into_iter()
-            .fold(Vec::new(), |mut accum: Vec<Vec<RowId>>, group| {
+            .fold(Vec::new(), |mut accum: Vec<Vec<FileIdent>>, group| {
                 match accum.last_mut() {
                     Some(last) if last.len() + group.len() < 10_000 => {
                         // Extend the previous candidate group, as though these files were also
@@ -355,24 +354,31 @@ fn get_store_checksums(
     };
 
     let mut checksums = HashMap::new();
-    for file_ids in candidate_groups {
-        assert!(file_ids.len() > 1);
+    for file_idents in candidate_groups {
+        assert!(file_idents.len() > 1);
         trace!(
             "Getting {} candidate files from DB to compute {}",
-            file_ids.len(),
+            file_idents.len(),
             checksum_description
         );
         let loop_start_time = Instant::now();
 
         let mut need_checksums = Vec::new();
-        get_files(conn, &file_ids, options.remember_checksums, |file| {
-            trace!("Added candidate file: {:?}", file);
-            need_checksums.push(file);
-        })?;
+
+        get_files(
+            conn,
+            &file_idents,
+            !options.no_remember_checksums,
+            true,
+            |file| {
+                trace!("Added candidate file (and all with same inode): {:?}", file);
+                need_checksums.push(file);
+            },
+        )?;
 
         trace!(
             "Constructed {} files from DB rows. {:?} elapsed.",
-            file_ids.len(),
+            file_idents.len(),
             loop_start_time.elapsed()
         );
 
@@ -386,9 +392,12 @@ fn get_store_checksums(
         )?);
     }
 
-    let mut candidate_groups: HashMap<Checksum, Vec<RowId>> = HashMap::new();
-    for (row_id, checksum) in checksums {
-        candidate_groups.entry(checksum).or_default().push(row_id);
+    let mut candidate_groups: HashMap<Checksum, Vec<FileIdent>> = HashMap::new();
+    for (file_ident, checksum) in checksums {
+        candidate_groups
+            .entry(checksum)
+            .or_default()
+            .push(file_ident);
     }
 
     debug!("{} took: {:?}", routine_description, start_time.elapsed());
@@ -406,10 +415,10 @@ fn store_checksums(
     checksum_column_name: &str,
     conn: &mut Connection,
     options: &Arc<Options>,
-) -> Result<HashMap<RowId, Checksum>> {
+) -> Result<HashMap<FileIdent, Checksum>> {
     // Each element is list of links that refer to the same file.
     // One checksum job is spawned for those hard links.
-    let mut files_in_queue: HashMap<JobId, Vec<RowId>> = HashMap::new();
+    let mut files_in_queue = HashSet::new();
 
     let pool = ThreadPool::default();
     let io_lock = Arc::new(Semaphore::new(options.max_io_threads as isize)); // Just one thread is fastest when doing I/O
@@ -420,66 +429,56 @@ fn store_checksums(
         let tx = tx.clone();
         let counter = Arc::clone(&counter);
         let available_memory = Arc::clone(&available_memory);
-        let pair = (file.inode, file.deviceno);
-        files_in_queue
-            .entry(pair)
-            .and_modify(|waitlist| {
-                // This inode is already in the job queue
-                waitlist.push(file.row_id);
-            })
-            .or_insert_with(|| {
-                // This is a new inode/device combination
-
-                let existing_checksum = if options.remember_checksums {
-                    if chunk_size == SHORT_CHUNK_SIZE {
-                        file.short_checksum
-                    } else {
-                        file.checksum
-                    }
+        let file_ident = FileIdent::new(file.inode, file.deviceno);
+        if files_in_queue.insert(file_ident) {
+            // This is a new inode/device combination
+            let existing_checksum = if !options.no_remember_checksums {
+                if chunk_size == SHORT_CHUNK_SIZE {
+                    file.short_checksum
                 } else {
-                    None
-                };
-
-                if let Some(existing_checksum) = existing_checksum {
-                    // Because this file may share an inode with another, it should share the same logic flow.
-                    // It's just that the "calculate the checksum" procedure is a noop.
-                    trace!("Remembed checksum result: {}", file.row_id);
-                    let result = Ok(existing_checksum);
-                    counter.fetch_add(1, Relaxed);
-                    tx.send((pair, result)).unwrap();
-                } else {
-                    trace!("Sending checksum job to a thread worker: {}", file.row_id);
-                    let path = file.path().unwrap();
-                    let io_lock = Arc::clone(&io_lock);
-                    let filesize = file.size;
-                    let max_io = options.max_io_threads;
-                    let options = Arc::clone(options);
-                    pool.execute(move || {
-                        trace!("Starting job for file {:?}: {:?}", &path, pair);
-                        let result = compute_checksum(
-                            io_lock,
-                            max_io,
-                            available_memory,
-                            path,
-                            filesize,
-                            chunk_size,
-                            pair,
-                            options,
-                        );
-                        counter.fetch_add(1, Relaxed);
-                        tx.send((pair, result)).unwrap();
-                    });
+                    file.checksum
                 }
+            } else {
+                None
+            };
 
-                // FIXME: won't this be a problem?
-                vec![file.row_id]
-            });
+            if let Some(existing_checksum) = existing_checksum {
+                // Because this file may share an inode with another, it should share the same logic flow.
+                // It's just that the "calculate the checksum" procedure is a noop.
+                trace!("Remembed checksum result: {}", file.row_id);
+                let result = Ok(existing_checksum);
+                counter.fetch_add(1, Relaxed);
+                tx.send((file_ident, result)).unwrap();
+            } else {
+                trace!("Sending checksum job to a thread worker: {}", file.row_id);
+                let path = file.path().unwrap();
+                let io_lock = Arc::clone(&io_lock);
+                let filesize = file.size;
+                let max_io = options.max_io_threads;
+                let options = Arc::clone(options);
+                pool.execute(move || {
+                    trace!("Starting job for file {:?}: {:?}", &path, file_ident);
+                    let result = compute_checksum(
+                        io_lock,
+                        max_io,
+                        available_memory,
+                        path,
+                        filesize,
+                        chunk_size,
+                        file_ident,
+                        options,
+                    );
+                    counter.fetch_add(1, Relaxed);
+                    tx.send((file_ident, result)).unwrap();
+                });
+            }
+        }
     }
 
     debug!("Now waiting for thread results");
 
     let mut transaction = Box::new(transaction(conn)?);
-    let mut checksum_data = HashMap::new();
+    let mut checksum_data: HashMap<FileIdent, _> = HashMap::new();
     for n in 1..=files_in_queue.len() {
         if n % 1000 == 0 {
             // Commit and start a new transaction, in case the operation is interrupted
@@ -487,7 +486,7 @@ fn store_checksums(
             transaction = Box::new(file_db::transaction(conn)?);
         }
         trace!("Receiving result {} of {}", n, files_in_queue.len());
-        let (pair, result) = rx.recv()?;
+        let (file_ident, result) = rx.recv()?;
         trace!(
             "Got result {} of {} ({})",
             n,
@@ -499,24 +498,17 @@ fn store_checksums(
             Err(_) => continue,
         };
 
-        trace!("Found checksum result {} for job {:?}", checksum, pair);
-        let waiting_for_checksum = files_in_queue.get_mut(&pair).unwrap();
-        assert!(!waiting_for_checksum.is_empty()); // something should be waiting for this
-
-        for rowid in waiting_for_checksum.iter() {
-            checksum_data.insert(*rowid, checksum);
-        }
-
         trace!(
-            "Updating {} records for: {:?}",
-            waiting_for_checksum.len(),
-            pair
+            "Found checksum result {} for job {:?}",
+            checksum,
+            file_ident
         );
-        let (inode, deviceno) = pair;
-        update_records(
+        checksum_data.insert(file_ident, checksum);
+
+        trace!("Updating checksum records for: {:?}", file_ident);
+        update_metadata(
             &transaction,
-            inode,
-            deviceno,
+            &file_ident,
             &[&checksum_column_name],
             params![checksum],
         )?;
@@ -537,7 +529,7 @@ fn compute_checksum(
     path: PathBuf,
     filesize: Size,
     chunk_size: usize,
-    job_id: FileId,
+    job_id: FileIdent,
     options: Arc<Options>,
 ) -> Result<Checksum, std::io::Error> {
     let read_amount = if chunk_size == 0 {
@@ -614,7 +606,7 @@ pub(crate) struct PrintMatches {}
 // This does NOT implement ProcessMatches because the args and return type are different.
 impl PrintMatches {
     pub(crate) fn process_matches(
-        groups: Vec<Vec<RowId>>, // not candidate_groups--these should be the final matches
+        groups: Vec<Vec<FileIdent>>, // not candidate_groups--these should be the final matches
         conn: &mut Connection,
         options: &Arc<Options>,
         tx: mpsc::SyncSender<DuplicateGroup>,
@@ -652,11 +644,10 @@ impl PrintMatches {
         let mut warned_newlines = false;
 
         for group_ids in groups.iter() {
-            // TODO: skip groups with length==1.
             // Drop the fully hard-linked groups:
 
             let mut group = Vec::new();
-            get_files(conn, group_ids, options.remember_checksums, |file| {
+            get_files(conn, group_ids, false, false, |file| {
                 file_count.fetch_add(1, Relaxed);
 
                 // If not writing to JSON, it's more important that the stdout output be correct:

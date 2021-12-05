@@ -23,6 +23,9 @@ Warning: this is alpha-level software. It has not had a lot of real world testin
     -j, --write-json <save-json-filename>   Save output to a file as JSON
     -p, --print-duplicates                  Print files that are duplicated on disk, but not already hard
                                             linked
+        --migrate-db                        Migrate a saved DB from version 0.0.1 or 0.0.2 to the current format.
+                                            Implies --no-truncate-db, as well as --keep-db if used without
+                                            another operation
 ```
 
 #### FLAGS:
@@ -39,11 +42,12 @@ Warning: this is alpha-level software. It has not had a lot of real world testin
                                             is also a possibility of crashes when files are modified
                                             during reading
         --no-truncate-db                    Keep the database file from the previous run
-    -q, --quiet                             Reduces level of verbosity.
-        --remember-checksums                Don't redo checksums that are already stored in a database.
+    -q, --quiet                             Reduces level of verbosity
+        --no-remember-checksums             Don't redo checksums that are already stored in a database.
                                             Useful for resuming an operation without knowing at what stage
                                             it stopped, or adding additional paths to an operation that
-                                            was completed
+                                            was completed. This option only makes sense with
+                                            --no-truncate-db
         --resume-stage3                     Resume a previous operation at stage 3: this computes any
                                             necessary full checksums, based on candidates (with matching
                                             short checksums) in an existing database file. Implies
