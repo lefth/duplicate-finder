@@ -126,18 +126,18 @@ pub(crate) struct Options {
     #[structopt(long)]
     pub no_remember_checksums: bool,
 
+    #[structopt(long)]
+    /// Continue consolidation even if there are other linked files that were not detected.
+    /// This means space will not be saved in some cases, but that's a necessity if running
+    /// with a backup copy (the backup copy normally being created with hard links).
+    pub allow_incomplete_consolidation: bool,
+
     // Shared state that's not from program arguments:
     #[structopt(skip)]
     pub interrupt_handlers: Arc<HandlerList>,
 
     #[structopt(skip)]
     pub db_must_exist: bool,
-
-    #[structopt(long)]
-    /// Continue consolidation even if there are other linked files that were not detected.
-    /// This means space will not be saved in some cases, but that's a necessity if running
-    /// with a backup copy (the backup copy normally being created with hard links).
-    pub allow_incomplete_consolidation: bool,
 
     #[structopt(skip)]
     /// The max total buffer memory for reading all files

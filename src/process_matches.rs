@@ -25,6 +25,7 @@ use crate::{
     duplicate_group::DuplicateGroup,
     file_data::FileData,
     file_db::{self, *},
+    helpers::get_deviceno,
     options::Options,
     types::{Basename, Checksum, Deviceno, Directory, FileIdent, Inode, Size},
 };
@@ -72,7 +73,7 @@ impl ProcessMatches for GetFiles {
         options: &Arc<Options>,
     ) -> Result<Box<dyn Iterator<Item = Vec<FileIdent>>>> {
         #[cfg(unix)]
-        use std::os::unix::prelude::MetadataExt;
+        use std::os::unix::fs::MetadataExt;
         #[cfg(windows)]
         use std::{fs::Metadata, os::windows::fs::MetadataExt};
 
@@ -190,12 +191,6 @@ impl ProcessMatches for GetFiles {
                 } else if options.max_size.0 > 0 && size > options.max_size {
                     trace!("Skipping file {:?}, too big at {} bytes.", path, size);
                 } else {
-                    #[cfg(windows)]
-                    fn get_device_no_win(md: &Metadata) -> u64 {
-                        md.volume_serial_number()
-                            .expect("Metadata must not be created with `DirEntry::metadata`")
-                            as u64
-                    }
                     let file_ident = FileIdent::new(
                         Inode(
                             #[cfg(unix)]
@@ -206,12 +201,7 @@ impl ProcessMatches for GetFiles {
                             md.file_index()
                                 .expect("Metadata must not be created with `DirEntry::metadata`"),
                         ),
-                        Deviceno(
-                            #[cfg(unix)]
-                            md.dev(),
-                            #[cfg(windows)]
-                            get_device_no_win(&md),
-                        ),
+                        Deviceno(get_deviceno(&md)),
                     );
                     let result = add_file(
                         &transaction,

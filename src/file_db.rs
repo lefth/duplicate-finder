@@ -1,7 +1,8 @@
 use std::{
     cell::RefCell,
     collections::HashMap,
-    path::PathBuf,
+    fs,
+    path::{Path, PathBuf},
     rc::Rc,
     sync::{
         atomic::{AtomicU64, Ordering::Relaxed},
@@ -19,73 +20,72 @@ use rusqlite::{
     OpenFlags, ToSql, Transaction,
 };
 
-use crate::{file_data::FileData, options::Options, types::*};
+use crate::{file_data::FileData, helpers::get_deviceno, options::Options, types::*};
 
 const SCHEMA_VERSION: u32 = 3;
 
+const DIRECTORIES_SCHEMA: &str = "CREATE TABLE directories (directory TEXT NOT NULL UNIQUE)";
+const FILES_SCHEMA: &str =
+    "CREATE TABLE files (basename TEXT NOT NULL, dir_id INTEGER64 NOT NULL, \
+    inode INTEGER64 NOT NULL, deviceno INTEGER64 NOT NULL, \
+    UNIQUE(basename, dir_id))";
+const METADATA_SCHEMA: &str = "CREATE TABLE metadata \
+    (inode INTEGER64 NOT NULL, deviceno INTEGER64 NOT NULL, size INTEGER64 NOT NULL, \
+    shortchecksum BLOB, checksum BLOB, \
+    UNIQUE(inode, deviceno))";
+// only one row allowed:
+const GLOBAL_INFO_SCHEMA: &str = "CREATE TABLE global_info \
+    (id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER NOT NULL)";
+
 pub(crate) fn init_connection(options: &mut Options) -> anyhow::Result<Connection> {
-    let mut conn = if options.db_file == ":memory:" {
-        Connection::open_in_memory()
+    let (existing, mut conn) = if options.db_file == ":memory:" {
+        (false, Connection::open_in_memory()?)
     } else if options.db_must_exist {
         let mut flags: OpenFlags = OpenFlags::default();
         flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
         // Give an error if there's no current DB file:
-        Connection::open_with_flags(&options.db_file, flags)
+        (true, Connection::open_with_flags(&options.db_file, flags)?)
     } else {
-        Connection::open(&options.db_file)
-    }?;
+        let path = Path::new(&options.db_file);
+        let mut exists = Path::exists(path);
+        if exists && !options.no_truncate_db {
+            fs::remove_file(path)?;
+            exists = false;
+        }
+        let conn = Connection::open(&options.db_file)?;
+        (exists, conn)
+    };
+
+    if existing {
+        if options.no_truncate_db && !options.migrate_db {
+            // A previous nonempty DB is being used, so we should make sure the schema version is okay
+            if matches!(get_schema_version(&conn), Some(schema_version) if schema_version < SCHEMA_VERSION)
+            {
+                bail!("The database's schema version {} is too old. Run with --migrate-db to fix.");
+            }
+        }
+
+        return Ok(conn);
+    }
 
     let tx = conn.transaction()?;
     tx.execute("PRAGMA encoding = \"UTF-8\"", [])?;
 
-    if options.no_truncate_db && !options.migrate_db {
-        // A previous nonempty DB is being used, so we should make sure the schema version is okay
-        check_schema_not_old(&tx)?;
-    }
-
-    // Create a table for files and a lookup for their directories. Don't add indexes;
-    // they are implicit as the "rowid" column. Also note that these types are just annotations--
+    // Note that these types are just annotations--
     // any column can hold any type, so we can store binary path names in TEXT fields.
-    for &(table_name, table_spec) in [
-        ("directories", "(directory TEXT NOT NULL UNIQUE)"),
-        (
-            "files",
-            "(basename TEXT NOT NULL, dir_id INTEGER64 NOT NULL, \
-            inode INTEGER64 NOT NULL, deviceno INTEGER64 NOT NULL, \
-            UNIQUE(basename, dir_id))",
-        ),
-        (
-            "metadata",
-            "(inode INTEGER64 NOT NULL, deviceno INTEGER64 NOT NULL, size INTEGER64 NOT NULL, \
-            shortchecksum BLOB, checksum BLOB, \
-            UNIQUE(inode, deviceno))",
-        ),
-        (
-            "global_info",
-            // only one row allowed:
-            "(id INTEGER PRIMARY KEY CHECK (id = 0), schema_version INTEGER NOT NULL)",
-        ),
+    let stmt = [
+        DIRECTORIES_SCHEMA,
+        FILES_SCHEMA,
+        METADATA_SCHEMA,
+        GLOBAL_INFO_SCHEMA,
     ]
-    .iter()
-    {
-        if !options.no_truncate_db {
-            tx.execute(&format!("DROP TABLE IF EXISTS {}", table_name), [])?;
+    .join(";");
+    tx.execute_batch(&stmt)?;
 
-            // never truncate twice if experimenting with multiple connections:
-            options.no_truncate_db = true;
-        }
-
-        let ifnotexists = if !options.no_truncate_db {
-            String::from("")
-        } else {
-            "IF NOT EXISTS".to_string()
-        };
-        let stmt = format!("CREATE TABLE {} {} {}", ifnotexists, table_name, table_spec);
-        trace!("Statement: {}", stmt);
-        tx.execute(&stmt, [])?;
-    }
-
-    set_schema_version(&tx)?;
+    tx.execute(
+        "INSERT INTO global_info (schema_version) VALUES (?)",
+        params![SCHEMA_VERSION],
+    )?;
 
     create_indexes(&tx)?;
 
@@ -123,24 +123,7 @@ fn create_indexes(tx: &Transaction) -> Result<()> {
     Ok(())
 }
 
-// TODO: convert this to return Result, but still assume the newest version
-// if `files` doesn't exist or the oldest version if `global_info` doesn't exist.
-fn get_schema_version(conn: &Connection) -> u32 {
-    // if a prior DB exists, make sure the schema is up to date:
-
-    // Treat errors as nonexistence:
-    let files_table_exists = matches!(
-        conn.prepare("SELECT EXISTS(SELECT 1 FROM files)")
-            .map(|mut stmt| stmt.query_row([], |row| row.get(0))),
-        Ok(Ok(true))
-    );
-
-    if !files_table_exists {
-        // An empty database is a database that's about to be created in the newest schema:
-        trace!("files table doesn't exist. This must be a new DB");
-        return SCHEMA_VERSION;
-    }
-
+fn get_schema_version(conn: &Connection) -> Option<u32> {
     match conn
         .prepare("SELECT schema_version FROM global_info")
         .map(|mut stmt| {
@@ -151,50 +134,16 @@ fn get_schema_version(conn: &Connection) -> u32 {
         }) {
         Ok(Ok(schema_version)) => {
             trace!("Found schema version: {}", schema_version);
-            return schema_version;
+            return Some(schema_version);
         }
         Err(err) | Ok(Err(err)) => {
             // DB errors mean the schema table isn't present--it's an old version
             trace!(
-                "Got DB error while getting schema, so assuming it's version 1. {:?}",
+                "Got DB error while getting schema, returning None. {:?}",
                 err
             );
-            return 1;
+            return None;
         }
-    }
-}
-
-fn set_schema_version(conn: &Connection) -> Result<()> {
-    // make sure the table has one row:
-    let _ = conn.execute(
-        "INSERT INTO global_info (schema_version) VALUES (?)",
-        params![SCHEMA_VERSION],
-    );
-
-    // Set the schema version:
-    conn.execute(
-        &format!("UPDATE global_info SET schema_version = {}", SCHEMA_VERSION),
-        [],
-    )?;
-    Ok(())
-}
-
-fn check_schema_not_old(conn: &Connection) -> Result<()> {
-    let schema_version = get_schema_version(conn);
-
-    if schema_version > SCHEMA_VERSION {
-        bail!(
-            "This program is too old to operate on schema {}. Please upgrade or create a new DB.",
-            schema_version
-        );
-    } else if schema_version < SCHEMA_VERSION {
-        bail!(
-            "The database's schema version {} is too old. Run with --migrate-db to fix.",
-            schema_version
-        );
-    } else {
-        trace!("Database schema number matches");
-        Ok(())
     }
 }
 
@@ -238,9 +187,13 @@ pub(crate) fn add_file(
         // Handle directory IDs that already exist:
         let directory_id = match result {
             Ok(_) => Ok(conn.last_insert_rowid()),
-            Err(Error::SqliteFailure(ffi::Error { code, .. }, ..))
-                if code == ErrorCode::ConstraintViolation =>
-            {
+            Err(Error::SqliteFailure(
+                ffi::Error {
+                    code: ErrorCode::ConstraintViolation,
+                    extended_code: 2067,
+                },
+                ..,
+            )) => {
                 // Row exists. This is not a real problem:
                 let mut stmt =
                     conn.prepare_cached("SELECT rowid FROM directories WHERE directory = ?")?;
@@ -282,7 +235,7 @@ pub(crate) fn add_file(
             Error::SqliteFailure(
                 ffi::Error {
                     code: ErrorCode::ConstraintViolation,
-                    ..
+                    extended_code: 2067,
                 },
                 _,
             ),
@@ -321,7 +274,7 @@ pub(crate) fn add_file(
             Error::SqliteFailure(
                 ffi::Error {
                     code: ErrorCode::ConstraintViolation,
-                    ..
+                    extended_code: 2067,
                 },
                 _,
             ),
@@ -460,17 +413,18 @@ pub(crate) fn get_with_checksum(
 
 /// Migrate a database from the old format to a newer, more relational format.
 pub(crate) fn migrate_db(conn: &mut Connection) -> Result<()> {
-    let schema_version = get_schema_version(conn);
-    if schema_version == SCHEMA_VERSION {
-        trace!(
-            "Skipping DB migration since schema is already {}",
-            schema_version
-        );
+    if matches!(get_schema_version(conn), Some(schema_version) if schema_version == SCHEMA_VERSION)
+    {
+        debug!("Skipping DB migration since schema is already current.",);
         return Ok(());
     }
     trace!("Migrating DB to new format with a separate metadata table");
 
     let tx = conn.transaction()?;
+
+    tx.execute(METADATA_SCHEMA, [])?;
+
+    create_indexes(&tx)?;
 
     tx.execute(
         "INSERT INTO metadata (inode, deviceno, size, shortchecksum, checksum) \
@@ -496,10 +450,17 @@ pub(crate) fn migrate_db(conn: &mut Connection) -> Result<()> {
 
     create_indexes(&tx)?; // recreate the indexes
 
-    tx.execute(
-        "UPDATE global_info SET schema_version = ?",
-        params![SCHEMA_VERSION],
-    )?;
+    if let Ok(_) = tx.execute(GLOBAL_INFO_SCHEMA, []) {
+        tx.execute(
+            "INSERT INTO global_info (schema_version) VALUES (?)",
+            params![SCHEMA_VERSION],
+        )?;
+    } else {
+        tx.execute(
+            "UPDATE global_info SET schema_version = ?",
+            params![SCHEMA_VERSION],
+        )?;
+    }
 
     tx.commit()?;
     conn.execute("VACUUM", [])?;
@@ -633,15 +594,10 @@ where
         );
 
         let mut stmt = conn.prepare_cached(&format!(
-            "SELECT files.rowid \
-            , metadata.size \
-            , directory, basename \
-            {} \
-            FROM files
+            "SELECT files.rowid, metadata.size, directory, basename {} FROM files \
             INNER JOIN directories ON files.dir_id = directories.rowid \
             INNER JOIN metadata ON files.inode = metadata.inode AND files.deviceno = metadata.deviceno \
-            WHERE files.inode = ? AND files.deviceno = ? \
-            LIMIT 1",
+            WHERE files.inode = ? AND files.deviceno = ? LIMIT 1",
             if get_checksums {
                 ", metadata.shortchecksum, metadata.checksum"
             } else {
@@ -712,6 +668,146 @@ pub(crate) fn update_metadata(
         update_count,
         file_ident,
     );
+
+    Ok(())
+}
+
+pub(crate) fn remap_changed_device_numbers(conn: &mut Connection) -> Result<()> {
+    debug!("Will remap changed device numbers.");
+    let tx = conn.transaction()?;
+
+    fn get_revised_deviceno(tx: &Transaction, deviceno: u64) -> Result<Option<Deviceno>> {
+        debug!(
+            "Finding the current device number that was formerly: {}",
+            deviceno
+        );
+
+        let mut stmt = tx.prepare(
+            "SELECT basename, directory \
+                FROM files INNER JOIN directories ON files.dir_id = directories.rowid \
+                WHERE files.deviceno = ?",
+        )?;
+
+        // Note: this is lazily evaluated:
+        let device_numbers = stmt.query_map(params![deviceno], |row| {
+            let basename: Basename = row.get(0)?;
+            let directory: Directory = row.get(1)?;
+            let path: PathBuf = directory.join(&basename);
+            match fs::metadata(&path) {
+                Ok(md) => {
+                    let new_deviceno = get_deviceno(&md);
+                    if new_deviceno == deviceno {
+                        trace!("Device number {} is still correct", deviceno);
+                        Ok(Some(Deviceno(deviceno)))
+                    } else {
+                        debug!("Found new device number {} (was {}) for {:?}", new_deviceno, deviceno, &path);
+                        Ok(Some(Deviceno(new_deviceno)))
+                    }
+                }
+                Err(err) => {
+                    trace!(
+                        "Can't get metadata when trying to rediscover device IDs (skipping): {}, {:?}",
+                        err,
+                        &path
+                    );
+                    Ok(None)
+                }
+            }
+        })?;
+
+        for new_deviceno in device_numbers {
+            if let Ok(Some(new_deviceno)) = new_deviceno {
+                if deviceno == new_deviceno.0 {
+                    return Ok(None);
+                } else {
+                    return Ok(Some(new_deviceno));
+                }
+            }
+        }
+
+        return Ok(None);
+    }
+
+    let mut stmt = tx.prepare("SELECT DISTINCT deviceno FROM files")?;
+    let device_numbers = stmt
+        .query_map([], |row| row.get::<_, u64>(0))?
+        .collect::<Result<Vec<u64>, _>>()?;
+    drop(stmt);
+
+    // Check if the files still reside on this device number. If not, remap the number.
+    let device_numbers = device_numbers
+        .iter()
+        .map(|&deviceno| -> Result<_> {
+            let new_deviceno = get_revised_deviceno(&tx, deviceno)?;
+            if let Some(new_deviceno) = new_deviceno {
+                if device_numbers.contains(&new_deviceno.0) {
+                    let num_with_old_deviceno = tx.query_row(
+                        "SELECT COUNT() FROM metadata WHERE deviceno = ?",
+                        params![deviceno],
+                        |row| row.get::<_, u64>(0),
+                    )?;
+                    let num_with_new_deviceno = tx.query_row(
+                        "SELECT COUNT() FROM metadata WHERE deviceno = ?",
+                        params![new_deviceno],
+                        |row| row.get::<_, u64>(0),
+                    )?;
+                    warn!(
+                        "Will try to remap device number {} to {}, but {} already exists in the DB. \
+                        This may cause unique constraint errors. {} metadata entries have device {} but {} have device {}",
+                        deviceno, new_deviceno.0, new_deviceno.0, num_with_old_deviceno, deviceno, num_with_new_deviceno, new_deviceno.0
+                    );
+                }
+            }
+            Ok(new_deviceno.map(|revised_deviceno| (deviceno, revised_deviceno)))
+        })
+        .collect::<Result<Vec<Option<(u64, Deviceno)>>>>()?;
+    let device_numbers = device_numbers.into_iter().filter_map(|val| val);
+
+    // Update the numbers, and set the number negative so it won't be remapped
+    // again by a subsequent iteration.
+    for (deviceno, new_deviceno) in device_numbers {
+        debug!(
+            "Updating device number {}, changing to {}",
+            deviceno, new_deviceno.0
+        );
+        for table in ["files", "metadata"] {
+            let mut stmt = tx.prepare(&format!(
+                "UPDATE {} SET deviceno = -? WHERE deviceno = ?",
+                table
+            ))?;
+            stmt.execute(params![new_deviceno, deviceno])?;
+        }
+    }
+
+    // Correct the negative numbers:
+    for table in ["files", "metadata"] {
+        let mut stmt = tx.prepare(&format!(
+            "UPDATE {} SET deviceno = -deviceno WHERE deviceno < 0",
+            table
+        ))?;
+        match stmt.execute([]) {
+            Err(Error::SqliteFailure(
+                ffi::Error {
+                    code: ErrorCode::ConstraintViolation,
+                    extended_code: 2067,
+                },
+                _,
+            )) => {
+                bail!(
+                    "Cannot automatically update device numbers because new device number and old \
+                    are both present, and will not be unique after correcting."
+                );
+            }
+            result => {
+                // If this is an error, it will propagate up:
+                result?;
+            }
+        }
+    }
+
+    tx.commit()?;
+
+    debug!("Device number update done.");
 
     Ok(())
 }

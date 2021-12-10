@@ -1,8 +1,9 @@
 #![cfg_attr(windows, feature(windows_by_handle))]
 
-use std::fs;
+use std::io::BufRead;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
+use std::{fs, io};
 
 use anyhow::{Context, Result};
 use crossbeam_utils::thread;
@@ -17,6 +18,7 @@ mod consolidation;
 mod duplicate_group;
 mod file_data;
 mod file_db;
+mod helpers;
 mod options;
 mod process_matches;
 mod types;
@@ -96,6 +98,25 @@ fn main() -> Result<()> {
         file_db::migrate_db(&mut conn)?;
         if options.operation_count() == 1 {
             return Ok(());
+        }
+    }
+
+    if options.no_truncate_db
+        // the later stages don't need to read files from disk
+        && !options.resume_stage3
+        && !options.resume_stage4
+        && (!options.migrate_db || options.operation_count() > 1)
+    {
+        println!("Reusing old metadata. Is it okay to guess if a mountpoint device number has changed? [Y/n]");
+        println!("(Say yes unless you are scanning multiple drives with the same filenames using the same database.)");
+
+        let proceed = {
+            let _temp_handler = options.push_interrupt_handler(|| std::process::exit(1));
+            let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
+            !input_line.to_lowercase().starts_with("n")
+        };
+        if proceed {
+            file_db::remap_changed_device_numbers(&mut conn)?;
         }
     }
 
