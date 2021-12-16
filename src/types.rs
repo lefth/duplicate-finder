@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use log::{debug, error, info, trace, warn};
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
-pub(crate) struct Size(pub u64);
+pub struct Size(pub u64);
 
 impl Display for Size {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -47,7 +47,7 @@ impl FromStr for Size {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy, Serialize, Deserialize)]
-pub(crate) struct RowId(pub u64);
+pub struct RowId(pub u64);
 
 impl Deref for RowId {
     type Target = u64;
@@ -63,7 +63,7 @@ impl Display for RowId {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
-pub(crate) struct Deviceno(pub u64);
+pub struct Deviceno(pub u64);
 impl ToSql for Deviceno {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         self.0.to_sql()
@@ -71,7 +71,7 @@ impl ToSql for Deviceno {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
-pub(crate) struct Inode(pub u64);
+pub struct Inode(pub u64);
 impl ToSql for Inode {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         self.0.to_sql()
@@ -79,7 +79,7 @@ impl ToSql for Inode {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
-pub(crate) struct DirectoryId(pub u64);
+pub struct DirectoryId(pub u64);
 impl ToSql for DirectoryId {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         self.0.to_sql()
@@ -87,7 +87,7 @@ impl ToSql for DirectoryId {
 }
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone)]
-pub(crate) struct Directory(pub PathBuf);
+pub struct Directory(pub PathBuf);
 
 impl Deref for Directory {
     type Target = PathBuf;
@@ -116,7 +116,7 @@ impl<T: ?Sized + AsRef<OsStr>> From<&T> for Directory {
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone)]
 /// A filename that contains no directory component.
-pub(crate) struct Basename(pub PathBuf);
+pub struct Basename(pub PathBuf);
 
 impl ToSql for Basename {
     fn to_sql(&self) -> Result<ToSqlOutput<'_>, rusqlite::Error> {
@@ -150,7 +150,7 @@ impl<T: ?Sized + AsRef<OsStr>> From<&T> for Basename {
 }
 
 #[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
-pub(crate) struct Checksum(pub [u8; blake3::OUT_LEN]);
+pub struct Checksum(pub [u8; blake3::OUT_LEN]);
 
 impl FromSql for Checksum {
     fn column_result(value: ValueRef<'_>) -> Result<Self, FromSqlError> {
@@ -245,20 +245,20 @@ fn path_from_sql_column_result(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 /// Uniquely identify file data on disk. (Files with the same FileIdent are hard linked)
-pub(crate) struct FileIdent {
+pub struct FileIdent {
     pub inode: Inode,
     pub deviceno: Deviceno,
 }
 
 impl FileIdent {
-    pub(crate) fn new(inode: Inode, deviceno: Deviceno) -> FileIdent {
+    pub fn new(inode: Inode, deviceno: Deviceno) -> FileIdent {
         FileIdent { inode, deviceno }
     }
 }
 
 /// Interpret a byte string as a possibly invalid UTF-8 path,
 /// or as a possibly invalid UTF-16 string on Windows
-pub(crate) fn bytes_to_str(blob: &[u8]) -> Result<OsString> {
+pub fn bytes_to_str(blob: &[u8]) -> Result<OsString> {
     #[cfg(unix)]
     {
         Ok(OsString::from_vec(blob.to_vec()))

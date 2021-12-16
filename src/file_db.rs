@@ -38,7 +38,7 @@ const METADATA_SCHEMA: &str = "CREATE TABLE metadata \
 const GLOBAL_INFO_SCHEMA: &str = "CREATE TABLE global_info \
     (id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER NOT NULL)";
 
-pub(crate) fn init_connection(options: &mut Options) -> anyhow::Result<Connection> {
+pub fn init_connection(options: &mut Options) -> anyhow::Result<Connection> {
     let (existing, mut conn) = if options.db_file == ":memory:" {
         (false, Connection::open_in_memory()?)
     } else if options.db_must_exist {
@@ -150,7 +150,7 @@ fn get_schema_version(conn: &Connection) -> Option<u32> {
 
 /// Create a transaction with good performance characteristics,
 /// and runtime checking for exclusivity.
-pub(crate) fn transaction(conn: &Connection) -> Result<Transaction> {
+pub fn transaction(conn: &Connection) -> Result<Transaction> {
     // Use unchecked_transaction because we can't release a mutable Connection borrow
     // in the middle of a loop when we want to commit and restart a transaction.
     let mut t = conn.unchecked_transaction()?;
@@ -158,7 +158,7 @@ pub(crate) fn transaction(conn: &Connection) -> Result<Transaction> {
     Ok(t)
 }
 
-pub(crate) fn add_file(
+pub fn add_file(
     conn: &Transaction,
     basename: &Basename,
     directory: &Directory,
@@ -339,7 +339,7 @@ pub(crate) fn add_file(
 }
 
 /// Return the file row IDs of files that contain checksums for this column.
-pub(crate) fn get_with_checksum(
+pub fn get_with_checksum(
     conn: &Connection,
     column_name: &str,
     options: &Options,
@@ -443,7 +443,7 @@ pub(crate) fn get_with_checksum(
 }
 
 /// Migrate a database from the old format to a newer, more relational format.
-pub(crate) fn migrate_db(conn: &mut Connection) -> Result<()> {
+pub fn migrate_db(conn: &mut Connection) -> Result<()> {
     if matches!(get_schema_version(conn), Some(schema_version) if schema_version == SCHEMA_VERSION)
     {
         debug!("Skipping DB migration since schema is already current.",);
@@ -499,7 +499,7 @@ pub(crate) fn migrate_db(conn: &mut Connection) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn get_files<F>(
+pub fn get_files<F>(
     conn: &Connection,
     file_idents: &Vec<FileIdent>,
     get_checksums: bool,
@@ -675,7 +675,7 @@ fn n_question_marks(n: usize) -> String {
 }
 
 /// Update the given fields for all hard linked files (with the same inode/device).
-pub(crate) fn update_metadata(
+pub fn update_metadata(
     conn: &Transaction,
     file_ident: &FileIdent,
     fields: &[&str],
@@ -711,7 +711,7 @@ pub(crate) fn update_metadata(
     Ok(())
 }
 
-pub(crate) fn remap_changed_device_numbers(conn: &mut Connection) -> Result<()> {
+pub fn remap_changed_device_numbers(conn: &mut Connection) -> Result<()> {
     debug!("Will remap changed device numbers.");
     let tx = conn.transaction()?;
 

@@ -38,7 +38,7 @@ const SHORT_CHUNK_SIZE: usize = 4096;
 /// example, if they have the same size but may not match in other ways--and returns a more refined
 /// list of lists of potentially duplicate files. For example, groups of files with the same size
 /// and the same first bytes.
-pub(crate) trait ProcessMatches {
+pub trait ProcessMatches {
     /// This method refines lists of possible duplicates to smaller lists that pass more checks.
     /// Do not call this directly; call [`process_matches`] instead.
     fn process_matches_(
@@ -62,7 +62,7 @@ pub(crate) trait ProcessMatches {
 }
 
 /// Get all files, grouped only by size.
-pub(crate) struct GetFiles {}
+pub struct GetFiles {}
 
 impl ProcessMatches for GetFiles {
     /// Find all files in the given paths (of the required size) and add their info to the database.
@@ -240,7 +240,7 @@ impl ProcessMatches for GetFiles {
     }
 }
 
-pub(crate) struct GroupByShortChecksum {}
+pub struct GroupByShortChecksum {}
 
 impl ProcessMatches for GroupByShortChecksum {
     fn process_matches_(
@@ -264,7 +264,7 @@ impl ProcessMatches for GroupByShortChecksum {
     }
 }
 
-pub(crate) struct GroupByFullChecksum {}
+pub struct GroupByFullChecksum {}
 
 impl ProcessMatches for GroupByFullChecksum {
     fn process_matches_(
@@ -601,11 +601,11 @@ fn compute_checksum(
     trace!("Sending successful result for job {:?}", job_id);
     Ok(checksum)
 }
-pub(crate) struct PrintMatches {}
+pub struct PrintMatches {}
 
 // This does NOT implement ProcessMatches because the args and return type are different.
 impl PrintMatches {
-    pub(crate) fn process_matches(
+    pub fn process_matches(
         groups: Vec<Vec<FileIdent>>, // not candidate_groups--these should be the final matches
         conn: &mut Connection,
         options: &Arc<Options>,

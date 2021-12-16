@@ -7,24 +7,16 @@ use std::{fs, io};
 
 use anyhow::{Context, Result};
 use crossbeam_utils::thread;
-use options::Options;
 use structopt::lazy_static::lazy_static;
 use structopt::StructOpt;
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn, LevelFilter};
 
-mod consolidation;
-mod duplicate_group;
-mod file_data;
-mod file_db;
-mod helpers;
-mod options;
-mod process_matches;
-mod types;
-use crate::{
+use duplicates::{
     consolidation::*,
-    file_db::init_connection,
+    file_db,
+    options::Options,
     process_matches::ProcessMatches,
     process_matches::{GetFiles, GroupByFullChecksum, GroupByShortChecksum, PrintMatches},
 };
@@ -92,7 +84,7 @@ fn main() -> Result<()> {
     let mut options = Options::from_args();
     init(&mut options)?;
 
-    let mut conn = init_connection(&mut options)?;
+    let mut conn = file_db::init_connection(&mut options)?;
 
     if options.migrate_db {
         file_db::migrate_db(&mut conn)?;

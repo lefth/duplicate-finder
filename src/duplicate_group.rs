@@ -18,7 +18,7 @@ use crate::{
 /// duplicates[0] is a list of files that are already hard linked together.
 /// Likewise, duplicates[1] (if it exists) are hard linked together.
 /// But duplicates[0] and duplicates[1] are not hard links with each other.
-pub(crate) struct DuplicateGroup {
+pub struct DuplicateGroup {
     pub duplicates: Vec<Vec<PathBuf>>,
 
     pub redundant_bytes: u64,

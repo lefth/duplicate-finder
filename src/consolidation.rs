@@ -23,7 +23,7 @@ use uuid::Uuid;
 use crate::duplicate_group::DuplicateGroup;
 use crate::options::Options;
 
-pub(crate) fn user_confirmation(options: &Options) -> bool {
+pub fn user_confirmation(options: &Options) -> bool {
     options.dry_run || {
         eprintln!(
             "\nAutomatically hard linking files is a feature in testing and is not recommended \
@@ -38,7 +38,7 @@ pub(crate) fn user_confirmation(options: &Options) -> bool {
     }
 }
 
-pub(crate) fn consolidate_groups(
+pub fn consolidate_groups(
     rx_duplicates: mpsc::Receiver<DuplicateGroup>,
     options: &Options,
 ) -> Result<()> {
@@ -129,7 +129,7 @@ fn has_not_found_links(duplicate_group: &[PathBuf]) -> Result<bool> {
     Ok(extra_links)
 }
 
-pub(crate) fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup, options: &Options) {
+pub fn choose_group_to_preserve(duplicate_group: &mut DuplicateGroup, options: &Options) {
     let mut largest_idx = None;
     let mut largest_group = None;
     let mut idx_with_other_links = None;

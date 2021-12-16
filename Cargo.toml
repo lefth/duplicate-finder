@@ -6,6 +6,13 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "duplicates"
+path = "src/main.rs"
+
 [dependencies]
 ctrlc = "3.1.9"
 blake3 = { version = "0.3.7", features = ["rayon"] }

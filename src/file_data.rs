@@ -7,7 +7,7 @@ use crate::types::*;
 use log::{debug, error, info, trace, warn};
 
 #[derive(Debug)]
-pub(crate) struct FileData {
+pub struct FileData {
     pub row_id: RowId,
     pub dir: Option<Directory>,
     pub basename: Option<Basename>,

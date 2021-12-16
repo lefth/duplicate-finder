@@ -19,7 +19,7 @@ type HandlerList = Mutex<Vec<Box<dyn Fn() + Send>>>;
 #[derive(StructOpt)]
 #[structopt()]
 /// Find duplicate files, especially on large filesystems
-pub(crate) struct Options {
+pub struct Options {
     #[structopt(long)]
     /// Keep the database file from the previous run
     pub no_truncate_db: bool,
@@ -170,7 +170,7 @@ impl Options {
     }
 
     /// Get the number of operations requested by the user
-    pub(crate) fn operation_count(&self) -> u8 {
+    pub fn operation_count(&self) -> u8 {
         self.consolidate as u8
             + self.print_duplicates as u8
             + self.migrate_db as u8
@@ -287,7 +287,7 @@ fn get_positive_int(s: &str) -> Result<u32, String> {
     }
 }
 
-pub(crate) struct HandlerGuard(Arc<HandlerList>);
+pub struct HandlerGuard(Arc<HandlerList>);
 impl Drop for HandlerGuard {
     /// Restore the previous interrupt handler.
     fn drop(&mut self) {
