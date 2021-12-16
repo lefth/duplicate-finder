@@ -38,13 +38,19 @@ const METADATA_SCHEMA: &str = "CREATE TABLE metadata \
 const GLOBAL_INFO_SCHEMA: &str = "CREATE TABLE global_info \
     (id INTEGER PRIMARY KEY CHECK (id = 1), schema_version INTEGER NOT NULL)";
 
-pub fn init_connection(options: &mut Options) -> anyhow::Result<Connection> {
-    let (existing, mut conn) = if options.db_file == ":memory:" {
-        (false, Connection::open_in_memory()?)
-    } else if options.db_must_exist {
-        let mut flags: OpenFlags = OpenFlags::default();
+pub fn init_connection(options: &mut Options, readonly: bool) -> anyhow::Result<Connection> {
+    let mut flags = OpenFlags::default();
+    if readonly {
+        flags.remove(OpenFlags::SQLITE_OPEN_READ_WRITE);
         flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
+        flags |= OpenFlags::SQLITE_OPEN_READ_ONLY;
+    }
+
+    let (existing, mut conn) = if options.db_file == ":memory:" {
+        (false, Connection::open_in_memory_with_flags(flags)?)
+    } else if options.db_must_exist {
         // Give an error if there's no current DB file:
+        flags.remove(OpenFlags::SQLITE_OPEN_CREATE);
         (true, Connection::open_with_flags(&options.db_file, flags)?)
     } else {
         let path = Path::new(&options.db_file);
@@ -53,7 +59,7 @@ pub fn init_connection(options: &mut Options) -> anyhow::Result<Connection> {
             fs::remove_file(path)?;
             exists = false;
         }
-        let conn = Connection::open(&options.db_file)?;
+        let conn = Connection::open_with_flags(&options.db_file, flags)?;
         (exists, conn)
     };
 
@@ -66,6 +72,10 @@ pub fn init_connection(options: &mut Options) -> anyhow::Result<Connection> {
             }
         }
 
+        return Ok(conn);
+    }
+
+    if readonly {
         return Ok(conn);
     }
 

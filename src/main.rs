@@ -84,7 +84,7 @@ fn main() -> Result<()> {
     let mut options = Options::from_args();
     init(&mut options)?;
 
-    let mut conn = file_db::init_connection(&mut options)?;
+    let mut conn = file_db::init_connection(&mut options, false)?;
 
     if options.migrate_db {
         file_db::migrate_db(&mut conn)?;
