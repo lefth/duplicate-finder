@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
     rc::Rc,
@@ -568,12 +568,15 @@ where
     F: FnMut(FileData),
 {
     // limit the query to 500 rows. Repeat it if necessary.
-    for ids in file_idents[..].chunks(500) {
+    for ids in file_idents.chunks(500) {
+        let ids = HashSet::<FileIdent>::from_iter(ids.iter().cloned());
+
         let question_marks = n_question_marks(ids.len());
-        // TODO: try this with a temporary table instead of building a set of string keys.
-        // TODO: try this with multiple queries but being sure files.inode and files.deviceno are indexes.
-        // TODO: try this query assuming inodes usually aren't repeated on multiple devices, then afterwards
-        //       filter that (deviceno, inode) must match.
+        // Note: it's very slow to query one file at a time.
+        // Optimization: this query assumes inodes usually aren't repeated on multiple devices,
+        // then afterwards filters so (deviceno, inode) must match.
+        // Sqlite doesn't support using an array of tuples in the query, so we can't ask for:
+        // WHERE (inode, deviceno) IN ((i1, d1), (i2, d2), (i3, d3))
         let mut stmt = conn.prepare_cached(&format!(
             "SELECT files.rowid \
             , metadata.inode, metadata.deviceno, metadata.size \
@@ -581,7 +584,7 @@ where
             FROM files
             INNER JOIN directories ON files.dir_id = directories.rowid \
             INNER JOIN metadata ON files.inode = metadata.inode AND files.deviceno = metadata.deviceno \
-            WHERE files.inode || ',' || files.deviceno IN ({})",
+            WHERE files.inode IN ({})",
             if get_checksums {
                 ", metadata.shortchecksum, metadata.checksum"
             } else {
@@ -590,11 +593,15 @@ where
             question_marks
         ))?;
 
-        let mut rows = stmt.query(params_from_iter(
-            ids.iter()
-                .map(|r| format!("{},{}", r.inode.0, r.deviceno.0)),
-        ))?;
+        let mut rows = stmt.query(params_from_iter(ids.iter().map(|id| id.inode)))?;
         while let Some(row) = rows.next()? {
+            let deviceno = Deviceno(row.get(2)?);
+            let inode = Inode(row.get(1)?);
+
+            if !ids.contains(&FileIdent { inode, deviceno }) {
+                continue;
+            }
+
             let (short_checksum, checksum) = if get_checksums {
                 (row.get(6)?, row.get(7)?)
             } else {
@@ -605,12 +612,13 @@ where
                 RowId(row.get(0)?),
                 Some(row.get(4)?),
                 Some(row.get(5)?),
-                Deviceno(row.get(2)?),
-                Inode(row.get(1)?),
+                deviceno,
+                inode,
                 Size(row.get(3)?),
                 short_checksum,
                 checksum,
             );
+
             callback(file);
         }
     }
