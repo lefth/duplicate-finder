@@ -1,12 +1,12 @@
 #![cfg_attr(windows, feature(windows_by_handle))]
 
-use std::io::BufRead;
+use std::fs;
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Instant;
-use std::{fs, io};
 
 use anyhow::{Context, Result};
 use crossbeam_utils::thread;
+use duplicates::prompt;
 use structopt::lazy_static::lazy_static;
 use structopt::StructOpt;
 
@@ -99,16 +99,12 @@ fn main() -> Result<()> {
         && !options.resume_stage4
         && (!options.migrate_db || options.operation_count() > 1)
     {
-        eprintln!("Reusing old metadata. Is it okay to guess if a mountpoint device number has changed? [Y/n]");
-        eprintln!("(Say yes unless you are scanning multiple drives with the same filenames using the same database.)");
-
-        let proceed = {
-            options.no_prompt || {
-                let _temp_handler = options.push_interrupt_handler(|| std::process::exit(1));
-                let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
-                !input_line.to_lowercase().starts_with("n")
-            }
-        };
+        let proceed = prompt(
+            &options,
+            "Reusing old metadata. Is it okay to guess if a mountpoint device number has changed? \
+                \n(Say yes unless you are scanning multiple drives with the same filenames using the same database.)",
+            true,
+        );
         if proceed {
             file_db::remap_changed_device_numbers(&mut conn)?;
         }
@@ -136,7 +132,13 @@ fn main() -> Result<()> {
     };
 
     // Get user confirmation before we show a bunch of output, since the output will hide the prompt:
-    let user_confirmed_consolidation = options.consolidate && user_confirmation(&options);
+    let user_confirmed_consolidation = options.consolidate
+        && prompt(
+            &options,
+            "\nAutomatically hard linking files is not recommended unless you have made a backup.\n\
+            Proceed anyway?",
+            false,
+        );
 
     // Because all the filenames might not fit in memory, we have to process them with a channel
     // as they are generated:

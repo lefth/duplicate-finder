@@ -1,6 +1,5 @@
 use std::{
     ffi::OsString,
-    io::{self, BufRead},
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -12,7 +11,7 @@ use structopt::*;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 
-use crate::types::Size;
+use crate::{prompt, types::Size};
 
 type HandlerList = Mutex<Vec<Box<dyn Fn() + Send>>>;
 
@@ -215,11 +214,7 @@ impl Options {
         }
 
         if self.no_truncate_db && !self.keep_db {
-            eprintln!("Do you really want to remember keep the previous database now but delete it afterwards? [y/N]");
-            if !self.no_prompt && {
-                let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
-                !input_line.to_lowercase().starts_with("y")
-            } {
+            if !prompt(&self, "Do you really want to remember keep the previous database now but delete it afterwards?", false) {
                 std::process::exit(1);
             }
         }

@@ -1,6 +1,5 @@
 use std::{
     fs::{self, Metadata},
-    io::{self, BufRead},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering::Relaxed},
@@ -22,22 +21,6 @@ use uuid::Uuid;
 
 use crate::duplicate_group::DuplicateGroup;
 use crate::options::Options;
-
-pub fn user_confirmation(options: &Options) -> bool {
-    options.dry_run || {
-        eprintln!(
-            "\nAutomatically hard linking files is a feature in testing and is not recommended \
-            unless you have made a backup. Proceed anyway? [y/N]"
-        );
-
-        options.no_prompt || {
-            // ctrl-c should quit at this prompt, not show a status message:
-            let _handler_guard = options.push_interrupt_handler(|| std::process::exit(1));
-            let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
-            input_line.to_lowercase().starts_with("y")
-        }
-    }
-}
 
 pub fn consolidate_groups(
     rx_duplicates: mpsc::Receiver<DuplicateGroup>,
