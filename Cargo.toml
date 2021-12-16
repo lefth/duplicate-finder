@@ -16,7 +16,6 @@ path = "src/main.rs"
 [dependencies]
 ctrlc = "3.1.9"
 blake3 = { version = "0.3.7", features = ["rayon"] }
-criterion = "0.3.5"
 log = { version = "0.4.14", features = ["max_level_trace"] }
 env_logger = "0.8.3"
 multi-semaphore = { version = "0.1.1", git = "https://github.com/lefth/multi-semaphore" }
@@ -32,6 +31,9 @@ fallible-iterator = "0.2.0"
 uuid = { version = "0.8.2", features = ["v4"] }
 crossbeam-utils = "0.8.5"
 globset = "0.4.8"
+
+[dev-dependencies]
+criterion = "0.3.5"
 
 [dependencies.rusqlite]
 version = "0.25.3"
