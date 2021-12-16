@@ -636,52 +636,63 @@ fn get_files_single<F>(
 where
     F: FnMut(FileData),
 {
-    // TODO: compare this to the performance of using some technique to mimic
-    // `DISTINCT ON (columns)`: https://www.sisense.com/blog/4-ways-to-join-only-the-first-row-in-sql/
-    // and select where inode,device in (?,?,?,...,?).
-    for file_ident in file_idents {
-        trace!(
-            "Getting file info {} for ident: {:?}",
-            if get_checksums {
-                "with checksums"
-            } else {
-                "without checksums"
-            },
-            file_ident
-        );
+    // limit the query to 500 rows. Repeat it if necessary.
+    for ids in file_idents.chunks(500) {
+        let ids = HashSet::<FileIdent>::from_iter(ids.iter().cloned());
 
+        let question_marks = n_question_marks(ids.len());
+        // Note: it's very slow to query one file at a time.
+        // Optimization: this query assumes inodes usually aren't repeated on multiple devices,
+        // then afterwards filters so (deviceno, inode) must match.
+        // Sqlite doesn't support using an array of tuples in the query, so we can't ask for:
+        // WHERE (inode, deviceno) IN ((i1, d1), (i2, d2), (i3, d3))
         let mut stmt = conn.prepare_cached(&format!(
-            "SELECT files.rowid, metadata.size, directory, basename {} FROM files \
+            "SELECT files.rowid \
+            , metadata.inode, metadata.deviceno, metadata.size \
+            , directory, basename {} \
+            FROM files
             INNER JOIN directories ON files.dir_id = directories.rowid \
             INNER JOIN metadata ON files.inode = metadata.inode AND files.deviceno = metadata.deviceno \
-            WHERE files.inode = ? AND files.deviceno = ? LIMIT 1",
+            WHERE files.inode IN ({}) \
+            GROUP BY metadata.inode, metadata.deviceno",
             if get_checksums {
                 ", metadata.shortchecksum, metadata.checksum"
             } else {
                 ""
             },
+            question_marks
         ))?;
 
-        stmt.query_row(params![file_ident.inode, file_ident.deviceno], |row| {
+        let mut rows = stmt.query(params_from_iter(ids.iter().map(|id| id.inode)))?;
+        while let Some(row) = rows.next()? {
+            let deviceno = Deviceno(row.get(2)?);
+            let inode = Inode(row.get(1)?);
+
+            if !ids.contains(&FileIdent { inode, deviceno }) {
+                continue;
+            }
+
             let (short_checksum, checksum) = if get_checksums {
-                (row.get(4)?, row.get(5)?)
+                (row.get(6)?, row.get(7)?)
             } else {
                 (None, None)
             };
+
             let file = FileData::new(
                 RowId(row.get(0)?),
-                Some(row.get(2)?),
-                Some(row.get(3)?),
-                file_ident.deviceno,
-                file_ident.inode,
-                Size(row.get(1)?),
+                Some(row.get(4)?),
+                Some(row.get(5)?),
+                deviceno,
+                inode,
+                Size(row.get(3)?),
                 short_checksum,
                 checksum,
             );
+
             callback(file);
-            Ok(())
-        })?;
+        }
     }
+
     Ok(())
 }
 
