@@ -69,12 +69,22 @@ impl ToSql for Deviceno {
         self.0.to_sql()
     }
 }
+impl FromSql for Deviceno {
+    fn column_result(value: ValueRef<'_>) -> types::FromSqlResult<Self> {
+        Ok(Deviceno(u64::column_result(value)?))
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
 pub struct Inode(pub u64);
 impl ToSql for Inode {
     fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
         self.0.to_sql()
+    }
+}
+impl FromSql for Inode {
+    fn column_result(value: ValueRef<'_>) -> types::FromSqlResult<Self> {
+        Ok(Inode(u64::column_result(value)?))
     }
 }
 
