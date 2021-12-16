@@ -21,7 +21,7 @@ use rusqlite::{
     OpenFlags, ToSql, Transaction,
 };
 
-use crate::{file_data::FileData, helpers::get_deviceno, options::Options, types::*};
+use crate::{file_data::FileData, get_deviceno, options::Options, types::*};
 
 const SCHEMA_VERSION: u32 = 3;
 

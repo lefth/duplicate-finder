@@ -25,7 +25,7 @@ use crate::{
     duplicate_group::DuplicateGroup,
     file_data::FileData,
     file_db::{self, *},
-    helpers::get_deviceno,
+    get_deviceno,
     options::Options,
     types::{Basename, Checksum, Deviceno, Directory, FileIdent, Inode, Size},
 };
@@ -75,7 +75,7 @@ impl ProcessMatches for GetFiles {
         #[cfg(unix)]
         use std::os::unix::fs::MetadataExt;
         #[cfg(windows)]
-        use std::{fs::Metadata, os::windows::fs::MetadataExt};
+        use std::os::windows::fs::MetadataExt;
 
         assert!(candidate_groups.is_none()); // This is the first stage, there should be no candidate files yet.
 
