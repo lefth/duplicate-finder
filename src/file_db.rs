@@ -529,113 +529,7 @@ where
 
     let count = Rc::new(AtomicU64::new(0));
     let count_ = Rc::clone(&count);
-    let excluding_callback = |file_data: FileData| {
-        debug_assert!(
-            file_data.path().is_ok(),
-            "File should have been created with path info"
-        );
 
-        let file_path = file_data.path().unwrap();
-        match exclude {
-            Some(glob) if glob.is_match(&file_path) => {
-                trace!("Skipping excluded file: {:?}", file_path);
-            }
-            _ => {
-                callback(file_data);
-                count_.fetch_add(1, Relaxed);
-            }
-        }
-    };
-
-    if single_file {
-        get_files_single(conn, file_idents, get_checksums, excluding_callback)?;
-    } else {
-        get_files_(conn, file_idents, get_checksums, excluding_callback)?;
-    }
-
-    trace!("Fetched {} rows", count.load(Relaxed));
-
-    Ok(())
-}
-
-fn get_files_<F>(
-    conn: &Connection,
-    file_idents: &[FileIdent],
-    get_checksums: bool,
-    mut callback: F,
-) -> Result<()>
-where
-    F: FnMut(FileData),
-{
-    // limit the query to 500 rows. Repeat it if necessary.
-    for ids in file_idents.chunks(500) {
-        let ids = HashSet::<FileIdent>::from_iter(ids.iter().cloned());
-
-        let question_marks = n_question_marks(ids.len());
-        // Note: it's very slow to query one file at a time.
-        // Optimization: this query assumes inodes usually aren't repeated on multiple devices,
-        // then afterwards filters so (deviceno, inode) must match.
-        // Sqlite doesn't support using an array of tuples in the query, so we can't ask for:
-        // WHERE (inode, deviceno) IN ((i1, d1), (i2, d2), (i3, d3))
-        let mut stmt = conn.prepare_cached(&format!(
-            "SELECT files.rowid \
-            , metadata.inode, metadata.deviceno, metadata.size \
-            , directory, basename {} \
-            FROM files
-            INNER JOIN directories ON files.dir_id = directories.rowid \
-            INNER JOIN metadata ON files.inode = metadata.inode AND files.deviceno = metadata.deviceno \
-            WHERE files.inode IN ({})",
-            if get_checksums {
-                ", metadata.shortchecksum, metadata.checksum"
-            } else {
-                ""
-            },
-            question_marks
-        ))?;
-
-        let mut rows = stmt.query(params_from_iter(ids.iter().map(|id| id.inode)))?;
-        while let Some(row) = rows.next()? {
-            let deviceno = Deviceno(row.get(2)?);
-            let inode = Inode(row.get(1)?);
-
-            if !ids.contains(&FileIdent { inode, deviceno }) {
-                continue;
-            }
-
-            let (short_checksum, checksum) = if get_checksums {
-                (row.get(6)?, row.get(7)?)
-            } else {
-                (None, None)
-            };
-
-            let file = FileData::new(
-                RowId(row.get(0)?),
-                Some(row.get(4)?),
-                Some(row.get(5)?),
-                deviceno,
-                inode,
-                Size(row.get(3)?),
-                short_checksum,
-                checksum,
-            );
-
-            callback(file);
-        }
-    }
-
-    Ok(())
-}
-
-/// Get files, but only return one file per FileIdent.
-fn get_files_single<F>(
-    conn: &Connection,
-    file_idents: &Vec<FileIdent>,
-    get_checksums: bool,
-    mut callback: F,
-) -> Result<()>
-where
-    F: FnMut(FileData),
-{
     // limit the query to 500 rows. Repeat it if necessary.
     for ids in file_idents.chunks(500) {
         let ids = HashSet::<FileIdent>::from_iter(ids.iter().cloned());
@@ -654,13 +548,18 @@ where
             INNER JOIN directories ON files.dir_id = directories.rowid \
             INNER JOIN metadata ON files.inode = metadata.inode AND files.deviceno = metadata.deviceno \
             WHERE files.inode IN ({}) \
-            GROUP BY metadata.inode, metadata.deviceno",
+            {}",
             if get_checksums {
                 ", metadata.shortchecksum, metadata.checksum"
             } else {
                 ""
             },
-            question_marks
+            question_marks,
+            if single_file {
+                "GROUP BY metadata.inode, metadata.deviceno"
+            } else {
+                ""
+            }
         ))?;
 
         let mut rows = stmt.query(params_from_iter(ids.iter().map(|id| id.inode)))?;
@@ -689,9 +588,22 @@ where
                 checksum,
             );
 
+            if let Some(exclude) = exclude {
+                let file_path = file
+                    .path()
+                    .expect("File should have been created with path info");
+                if exclude.is_match(&file_path) {
+                    trace!("Skipping excluded file: {:?}", file_path);
+                    continue;
+                }
+            }
+
             callback(file);
+            count_.fetch_add(1, Relaxed);
         }
     }
+
+    trace!("Fetched {} rows", count.load(Relaxed));
 
     Ok(())
 }
