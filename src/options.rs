@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::{bail, Result};
+use globset::{Glob, GlobSet};
 use structopt::*;
 
 #[allow(unused_imports)]
@@ -132,6 +133,16 @@ pub(crate) struct Options {
     /// with a backup copy (the backup copy normally being created with hard links).
     pub allow_incomplete_consolidation: bool,
 
+    #[structopt(long)]
+    /// This option can be passed more than once. These paths should be excluded from duplicate
+    /// checking and consolidation. These are glob patterns,
+    /// where "**" matches zero or more directories, "*" matches a part of a path component,
+    /// and "?" matches a single character.
+    // See further rules at: https://docs.rs/globset/latest/globset/index.html
+    exclude_: Vec<OsString>,
+    #[structopt(skip)]
+    pub exclude: Option<GlobSet>,
+
     // Shared state that's not from program arguments:
     #[structopt(skip)]
     pub interrupt_handlers: Arc<HandlerList>,
@@ -168,6 +179,27 @@ impl Options {
 
     /// Check for errors and make needed automatic changes due to implications from different options.
     pub fn validate(&mut self) -> Result<()> {
+        // Parse the exclude list into glob patterns (but don't expand them):
+        let mut glob_set = globset::GlobSetBuilder::new();
+        for pattern in self.exclude_.iter() {
+            if let Some(pattern) = pattern.to_str() {
+                match Glob::new(pattern) {
+                    Ok(glob) => {
+                        glob_set.add(glob);
+                    }
+                    Err(err) => {
+                        bail!("Could not process --exclude: {}", err);
+                    }
+                }
+            } else {
+                bail!("Could not process --exclude as UTF-8 path: {:?}", pattern);
+            }
+        }
+        match glob_set.build() {
+            Ok(glob_set) => self.exclude = Some(glob_set),
+            Err(err) => bail!("Error building exclude patterns: {}", err),
+        }
+
         if self.resume_stage3 || self.resume_stage4 {
             self.no_truncate_db = true;
             self.db_must_exist = true;

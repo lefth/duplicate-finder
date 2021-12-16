@@ -108,6 +108,11 @@ impl ProcessMatches for GetFiles {
             assert!(dir.is_dir());
             trace!("Exploring dir: {:?}", dir);
 
+            if matches!(options.exclude.as_ref(), Some(glob) if glob.is_match(&dir)) {
+                info!("Skipping excluded directory {:?}", dir);
+                continue;
+            }
+
             let canonical_path = match dir.canonicalize() {
                 Ok(canonical_path) => canonical_path,
                 Err(err) => {
@@ -139,13 +144,17 @@ impl ProcessMatches for GetFiles {
                     }
                 };
 
+                let path = dir_entry.path();
+                if matches!(options.exclude.as_ref(), Some(glob) if glob.is_match(&path)) {
+                    info!("Skipping excluded path {:?}", path);
+                    continue;
+                }
+
                 if (count.fetch_add(1, Relaxed) + 1) % 1000 == 0 {
                     // Commit and start a new transaction, in case the operation is interrupted
                     transaction.commit()?;
                     transaction = Box::new(file_db::transaction(conn)?);
                 }
-
-                let path = dir_entry.path();
 
                 // NOTE: do not use dir_entry.metadata() because it follows symlinks and will
                 // lead to infinite loops. It also doesn't contain all the information if used
@@ -360,6 +369,7 @@ fn get_store_checksums(
             &file_idents,
             !options.no_remember_checksums,
             true,
+            &options.exclude,
             |file| {
                 trace!("Added candidate file (and all with same inode): {:?}", file);
                 need_checksums.push(file);
@@ -637,7 +647,7 @@ impl PrintMatches {
             // Drop the fully hard-linked groups:
 
             let mut group = Vec::new();
-            get_files(conn, group_ids, false, false, |file| {
+            get_files(conn, group_ids, false, false, &options.exclude, |file| {
                 file_count.fetch_add(1, Relaxed);
 
                 // If not writing to JSON, it's more important that the stdout output be correct:

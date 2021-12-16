@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use fallible_iterator::FallibleIterator;
+use globset::GlobSet;
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
 use rusqlite::{
@@ -169,6 +170,18 @@ pub(crate) fn add_file(
     thread_local! {
         // This function is only called from one thread, and cache misses still wouldn't break anything
         static DIRECTORY_CACHE: DirectoryCache = Default::default();
+    }
+
+    if let Some(ref glob) = options.exclude {
+        debug_assert!(
+            !{
+                let path = directory.0.join(&basename.0);
+                glob.is_match(&path)
+            },
+            "Should not be adding file to database if its path was excluded: {:?}/{:?}",
+            directory,
+            basename,
+        );
     }
 
     let directory_id = DIRECTORY_CACHE
@@ -332,7 +345,6 @@ pub(crate) fn get_with_checksum(
     options: &Options,
 ) -> Result<Vec<Vec<FileIdent>>> {
     debug!("Reading checksums from DB.");
-    //TODO: this should filter based on the directory paths
 
     let completed_count = Arc::new(AtomicU64::new(0));
     let _handler_guard = {
@@ -346,18 +358,39 @@ pub(crate) fn get_with_checksum(
             )
         })
     };
-    let mut stmt = conn.prepare(&format!(
-        "SELECT inode, deviceno, {} FROM metadata WHERE {} IS NOT NULL AND size > ?
-            ORDER BY {}",
-        column_name, column_name, column_name,
-    ))?;
+
+    let mut stmt = if options.exclude.is_none() {
+        // we can do a faster query because we don't need to get paths:
+        conn.prepare(&format!(
+            "SELECT inode, deviceno, {} FROM metadata WHERE {} IS NOT NULL AND size > ?
+                ORDER BY {}",
+            column_name, column_name, column_name,
+        ))?
+    } else {
+        conn.prepare(&format!(
+            "SELECT files.inode, files.deviceno, {}, basename, directories.directory FROM files \
+                INNER JOIN metadata ON files.inode = metadata.inode AND files.deviceno = metadata.deviceno \
+                INNER JOIN directories ON files.dir_id = directories.rowid \
+                WHERE {} IS NOT NULL AND size > ? ORDER BY {}",
+            column_name, column_name, column_name,
+        ))?
+    };
 
     let rows = stmt.query([options.min_size.0])?.map(|row| {
         let inode = Inode(row.get(0)?);
         let deviceno = Deviceno(row.get(1)?);
         let checksum: Result<Checksum, _> = row.get(2);
+        if let Some(glob) = options.exclude.as_ref() {
+            let basename: Basename = row.get(3)?;
+            let directory: Directory = row.get(4)?;
+            let path = directory.0.join(&basename);
+            if glob.is_match(&path) {
+                // This path was excluded
+                return Ok(None);
+            }
+        }
         completed_count.fetch_add(1, Relaxed);
-        Ok((FileIdent::new(inode, deviceno), checksum))
+        Ok(Some((FileIdent::new(inode, deviceno), checksum)))
     });
 
     debug!("Grouping matching checksums from DB.");
@@ -372,42 +405,40 @@ pub(crate) fn get_with_checksum(
     };
 
     let mut curr_checksum = None;
-    let groups = rows.fold(
-        vec![],
-        |mut accum: Vec<Vec<FileIdent>>, (file_ident, checksum)| {
-            let checksum = match checksum {
-                Ok(checksum) => checksum,
-                Err(error) => {
-                    warn!("Could not get {}: {}", column_name, error);
-                    return Ok(accum); // continue
-                }
-            };
+    let groups = rows.fold(vec![], |mut accum: Vec<Vec<FileIdent>>, data| {
+        let (file_ident, checksum) = match data {
+            Some((file_ident, checksum)) => (file_ident, checksum),
+            None => return Ok(accum), // this file was skipped
+        };
 
-            let mut curr_group = match accum.pop() {
-                Some(curr_row) => curr_row,
-                None => {
-                    curr_checksum = Some(checksum);
-                    accum.push(vec![file_ident]);
-                    return Ok(accum); // continue, this is the first group
-                }
-            };
-
-            if checksum == curr_checksum.expect("Checksum must exist at this point") {
-                curr_group.push(file_ident);
-                accum.push(curr_group);
-            } else {
-                // curr_group (actually the prev group now) is valid only if the size > 1
-                if curr_group.len() > 1 {
-                    accum.push(curr_group);
-                }
-
-                // There's a new group, and a new current checksum
+        let mut curr_group = match accum.pop() {
+            Some(curr_row) => curr_row,
+            None => {
                 curr_checksum = Some(checksum);
-                accum.push(vec![file_ident])
+                accum.push(vec![file_ident]);
+                return Ok(accum); // continue, this is the first group
             }
-            Ok(accum)
-        },
-    );
+        };
+
+        if curr_checksum
+            .as_ref()
+            .expect("Checksum must exist at this point")
+            == &checksum
+        {
+            curr_group.push(file_ident);
+            accum.push(curr_group);
+        } else {
+            // curr_group (actually the prev group now) is valid only if the size > 1
+            if curr_group.len() > 1 {
+                accum.push(curr_group);
+            }
+
+            // There's a new group, and a new current checksum
+            curr_checksum = Some(checksum);
+            accum.push(vec![file_ident])
+        }
+        Ok(accum)
+    });
     groups.map_err(|err| anyhow!(err))
 }
 
@@ -473,6 +504,7 @@ pub(crate) fn get_files<F>(
     file_idents: &Vec<FileIdent>,
     get_checksums: bool,
     single_file: bool,
+    exclude: &Option<GlobSet>,
     mut callback: F,
 ) -> Result<()>
 where
@@ -487,20 +519,28 @@ where
 
     let count = Rc::new(AtomicU64::new(0));
     let count_ = Rc::clone(&count);
-    let callback = |file_data: FileData| {
+    let excluding_callback = |file_data: FileData| {
         debug_assert!(
             file_data.path().is_ok(),
             "File should have been created with path info"
         );
 
-        callback(file_data);
-        count_.fetch_add(1, Relaxed);
+        let file_path = file_data.path().unwrap();
+        match exclude {
+            Some(glob) if glob.is_match(&file_path) => {
+                trace!("Skipping excluded file: {:?}", file_path);
+            }
+            _ => {
+                callback(file_data);
+                count_.fetch_add(1, Relaxed);
+            }
+        }
     };
 
     if single_file {
-        get_files_single(conn, file_idents, get_checksums, callback)?;
+        get_files_single(conn, file_idents, get_checksums, excluding_callback)?;
     } else {
-        get_files_(conn, file_idents, get_checksums, callback)?;
+        get_files_(conn, file_idents, get_checksums, excluding_callback)?;
     }
 
     trace!("Fetched {} rows", count.load(Relaxed));
@@ -527,8 +567,7 @@ where
         let mut stmt = conn.prepare_cached(&format!(
             "SELECT files.rowid \
             , metadata.inode, metadata.deviceno, metadata.size \
-            , directory, basename \
-            {} \
+            , directory, basename {} \
             FROM files
             INNER JOIN directories ON files.dir_id = directories.rowid \
             INNER JOIN metadata ON files.inode = metadata.inode AND files.deviceno = metadata.deviceno \

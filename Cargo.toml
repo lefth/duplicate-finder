@@ -23,6 +23,7 @@ anyhow = { version = "1.0.44", features = ["backtrace"] }
 fallible-iterator = "0.2.0"
 uuid = { version = "0.8.2", features = ["v4"] }
 crossbeam-utils = "0.8.5"
+globset = "0.4.8"
 
 [dependencies.rusqlite]
 version = "0.25.3"

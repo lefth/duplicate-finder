@@ -72,6 +72,11 @@ Warning: this is alpha-level software. It has not had a lot of real world testin
         --db-file <db-file>
             Choose a file, new or existing, for the database. :memory: is a special value [default:
             metadata.sqlite]
+        --exclude <exclude>...
+            This option can be passed more than once. These paths should be excluded from duplicate checking and
+            consolidation. These are glob patterns, where "**" matches zero or more directories, "*" matches a part of a
+            path component, and "?" matches a single character. See further rules at:
+            [globset](https://docs.rs/globset/latest/globset/index.html)
 
     -t, --max-io-threads <max-io-threads>
             How many threads should read small files from disk at a time? Large files use one thread at a
