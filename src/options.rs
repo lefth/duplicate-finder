@@ -211,7 +211,7 @@ impl Options {
         }
 
         if self.no_truncate_db && !self.keep_db {
-            warn!("Do you really want to remember keep the previous database now but delete it afterwards? [y/N]");
+            eprintln!("Do you really want to remember keep the previous database now but delete it afterwards? [y/N]");
             let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
             if !input_line.to_lowercase().starts_with("y") {
                 std::process::exit(1);

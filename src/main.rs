@@ -99,8 +99,8 @@ fn main() -> Result<()> {
         && !options.resume_stage4
         && (!options.migrate_db || options.operation_count() > 1)
     {
-        println!("Reusing old metadata. Is it okay to guess if a mountpoint device number has changed? [Y/n]");
-        println!("(Say yes unless you are scanning multiple drives with the same filenames using the same database.)");
+        eprintln!("Reusing old metadata. Is it okay to guess if a mountpoint device number has changed? [Y/n]");
+        eprintln!("(Say yes unless you are scanning multiple drives with the same filenames using the same database.)");
 
         let proceed = {
             let _temp_handler = options.push_interrupt_handler(|| std::process::exit(1));
