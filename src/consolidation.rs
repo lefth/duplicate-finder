@@ -30,11 +30,12 @@ pub fn user_confirmation(options: &Options) -> bool {
             unless you have made a backup. Proceed anyway? [y/N]"
         );
 
-        // ctrl-c should quit at this prompt, not show a status message:
-        let _handler_guard = options.push_interrupt_handler(|| std::process::exit(1));
-
-        let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
-        input_line.to_lowercase().starts_with("y")
+        options.no_prompt || {
+            // ctrl-c should quit at this prompt, not show a status message:
+            let _handler_guard = options.push_interrupt_handler(|| std::process::exit(1));
+            let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
+            input_line.to_lowercase().starts_with("y")
+        }
     }
 }
 

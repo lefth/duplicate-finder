@@ -103,9 +103,11 @@ fn main() -> Result<()> {
         eprintln!("(Say yes unless you are scanning multiple drives with the same filenames using the same database.)");
 
         let proceed = {
-            let _temp_handler = options.push_interrupt_handler(|| std::process::exit(1));
-            let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
-            !input_line.to_lowercase().starts_with("n")
+            options.no_prompt || {
+                let _temp_handler = options.push_interrupt_handler(|| std::process::exit(1));
+                let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
+                !input_line.to_lowercase().starts_with("n")
+            }
         };
         if proceed {
             file_db::remap_changed_device_numbers(&mut conn)?;

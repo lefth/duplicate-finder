@@ -120,6 +120,10 @@ pub struct Options {
     #[structopt(long, hidden = true)]
     pub log: bool,
 
+    /// Don't show any prompts. Hidden option, not recommended for anything but profiling.
+    #[structopt(long, hidden = true)]
+    pub no_prompt: bool,
+
     /// Don't redo checksums that are already stored in a database.
     /// Useful for resuming an operation without knowing at what stage it stopped,
     /// or adding additional paths to an operation that was completed.
@@ -212,8 +216,10 @@ impl Options {
 
         if self.no_truncate_db && !self.keep_db {
             eprintln!("Do you really want to remember keep the previous database now but delete it afterwards? [y/N]");
-            let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
-            if !input_line.to_lowercase().starts_with("y") {
+            if !self.no_prompt && {
+                let input_line = io::stdin().lock().lines().next().unwrap().unwrap();
+                !input_line.to_lowercase().starts_with("y")
+            } {
                 std::process::exit(1);
             }
         }
