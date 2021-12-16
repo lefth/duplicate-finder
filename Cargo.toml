@@ -42,3 +42,7 @@ features = ["bundled"]
 [[bench]]
 name = "my_benchmark"
 harness = false
+
+# Same as RUSTFLAGS=-g
+#[profile.release]
+#debug = true
