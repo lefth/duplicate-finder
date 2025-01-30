@@ -66,9 +66,10 @@ pub fn init_connection(options: &mut Options, readonly: bool) -> anyhow::Result<
     if existing {
         if options.no_truncate_db && !options.migrate_db {
             // A previous nonempty DB is being used, so we should make sure the schema version is okay
-            if matches!(get_schema_version(&conn), Some(schema_version) if schema_version < SCHEMA_VERSION)
-            {
-                bail!("The database's schema version {} is too old. Run with --migrate-db to fix.");
+            if let Some(schema_version) = get_schema_version(&conn) {
+                if schema_version < SCHEMA_VERSION {
+                    bail!("The database's schema version {schema_version} is too old. Run with --migrate-db to fix.");
+                }
             }
         }
 
