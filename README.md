@@ -2,6 +2,8 @@
 
 [![Build Status](https://app.travis-ci.com/lefth/duplicate-finder.svg?branch=master)](https://app.travis-ci.com/lefth/duplicate-finder)
 
+Note: I now recommend using [fclones](https://github.com/pkolaczk/fclones) instead of this program, except on embedded devices where little memory is available and the file hashes are too large to fit in memory at once.
+
 A duplicate finder that works well on large and slow hard disks.
 
 This program is optimized for slow I/O and to avoid running out of memory, in contrast to
